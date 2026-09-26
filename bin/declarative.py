@@ -135,6 +135,9 @@ def main():
         sys.exit(0)
 
     doc = read(path)
+    for message in declarative.deprecations(doc):
+        log(f"{path}: {message}", "warning")
+        print(f"warning: {path}: {message}", file=sys.stderr)
     if action == "check":
         print(f"{path}: ok")
     elif action == "render":

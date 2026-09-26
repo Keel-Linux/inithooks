@@ -12,7 +12,9 @@ six files: 01ipconfig 23/23, lib/ipconfig.sh 25/25, 29tagid 19/19,
 lib/tagid.sh 8/8, turnkey-init-fence 28/28, lib/init-fence.sh 63/64 (98.44,
 the lowest file; total 99.40). The shell gate is set to 98, the lowest file
 rounded down. `coverage run --branch --source=libinithooks,bin -m pytest`
-measures 169 tests: libinithooks/declarative.py 100 percent,
+measures 185 tests (3 more skipped unless
+KEEL_SRC points at the instance tooling, which the vocabulary parity tests
+read): libinithooks/declarative.py 100 percent,
 bin/declarative.py 99 percent (one partial branch, the loop over the ignored
 candidates falling through), total 99; the Python gate is 95, the bar for
 project-authored code, with the inherited modules without tests omitted in

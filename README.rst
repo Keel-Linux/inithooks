@@ -449,7 +449,7 @@ Example::
 
     security:
       alerts: admin@example.org
-      updates: force
+      updates_at_first_boot: force
 
     first_login_wizard: false
 
@@ -467,7 +467,8 @@ Keys and the variables they produce::
     app.options.<key>           APP_<KEY>
     hub.api_key                 HUB_APIKEY
     security.alerts             SEC_ALERTS
-    security.updates            SEC_UPDATES
+    security.updates_at_first_boot
+                                SEC_UPDATES
     first_login_wizard: true    AUTO_RUN=TRUE
     network.*                   IP_CONFIG, IP_ADDRESS, IP_NETMASK, IP_GW,
                                 IP_DNS1, IP_DNS2
@@ -477,6 +478,13 @@ Notes:
 
     - version is required and must be 1. An unknown top level key is an
       error; keys under app.options and preseed are not checked.
+    - security.updates_at_first_boot controls one thing: whether 95secupdates
+      installs the pending security updates during the first boot. The
+      appliance keeps itself current either way, through cron-apt, so the
+      field is not the machine's update policy and is not named as if it
+      were. It was called security.updates, which is still read: the old
+      name renders the same conf and is reported once, with the new name, so
+      a description written before the rename keeps booting.
 
     - A secret is a mapping with exactly one of file or generate. A secret
       file is read as bytes, one trailing newline is stripped, and it must

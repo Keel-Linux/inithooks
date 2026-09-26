@@ -41,6 +41,20 @@ SCHEMA_VERSION = 1
 GENERATED_BYTES = 12
 MASK = "[masked]"
 
+# Field names the description used to have, per section, and what they are
+# called now. A description outlives the vocabulary it was written under, so
+# the old name keeps working and deprecations() says what to rename. The
+# instance tooling carries the same table; tests/test_vocabulary.py compares
+# the two so the halves cannot drift apart again.
+RENAMED = {
+    "security": {"updates": "updates_at_first_boot"},
+}
+RENAME_REASONS = {
+    "security.updates": "it reads as the machine's update policy, and it only"
+    " ever controlled whether the first boot installs the pending security"
+    " updates; the appliance keeps them current either way",
+}
+
 TOP_LEVEL_KEYS = (
     "version",
     "instance",
@@ -121,8 +135,58 @@ def load(path: str) -> dict:
     return doc
 
 
+def deprecations(doc: Any) -> list[str]:
+    """One warning per deprecated field name in `doc`, in document order"""
+    messages = []
+    if not isinstance(doc, dict):
+        return messages
+    for section, renames in RENAMED.items():
+        body = doc.get(section)
+        if not isinstance(body, dict):
+            continue
+        for old, new in renames.items():
+            if old not in body:
+                continue
+            reason = RENAME_REASONS.get(f"{section}.{old}", "")
+            message = (
+                f"{section}.{old} is deprecated, rename it to"
+                f" {section}.{new}"
+            )
+            messages.append(f"{message}: {reason}" if reason else message)
+    return messages
+
+
+def canonical(doc: Any) -> Any:
+    """A copy of `doc` with every deprecated field under its current name
+
+    The document it is given is left exactly as it was read, so the file on
+    the instance is never rewritten behind the operator's back. A section
+    that carries both names keeps the current one and drops the old.
+    """
+    if not isinstance(doc, dict):
+        return doc
+    result = dict(doc)
+    for section, renames in RENAMED.items():
+        body = result.get(section)
+        if not isinstance(body, dict):
+            continue
+        replaced = dict(body)
+        for old, new in renames.items():
+            if old not in replaced:
+                continue
+            value = replaced.pop(old)
+            replaced.setdefault(new, value)
+        result[section] = replaced
+    return result
+
+
 def validate(doc: dict) -> list[str]:
-    """Return a list of error messages, empty when the document is valid"""
+    """Return a list of error messages, empty when the document is valid
+
+    A deprecated field name is read under its current name, so a description
+    written before a rename gets the real errors rather than "unknown key".
+    """
+    doc = canonical(doc)
     errors: list[str] = []
 
     if doc.get("version") != SCHEMA_VERSION:
@@ -165,7 +229,12 @@ def _resolve_secret(spec: dict) -> str:
 
 
 def render_env(doc: dict, secrets: dict[str, str]) -> str:
-    """Render the document and the resolved secrets as a shell conf file"""
+    """Render the document and the resolved secrets as a shell conf file
+
+    A deprecated field name renders the same conf as its current name, so an
+    instance whose description predates a rename boots exactly as it did.
+    """
+    doc = canonical(doc)
     env: dict[str, str] = {}
 
     instance = doc.get("instance") or {}
@@ -189,7 +258,11 @@ def render_env(doc: dict, secrets: dict[str, str]) -> str:
 
     security = doc.get("security") or {}
     _set(env, "SEC_ALERTS", _keyword(security.get("alerts")))
-    _set(env, "SEC_UPDATES", _keyword(security.get("updates")))
+    _set(
+        env,
+        "SEC_UPDATES",
+        _keyword(security.get("updates_at_first_boot")),
+    )
 
     if doc.get("first_login_wizard"):
         env["AUTO_RUN"] = "TRUE"
@@ -510,7 +583,7 @@ def _validate_security(security: Any) -> list[str]:
 
     errors = []
     for key in security:
-        if key not in ("alerts", "updates"):
+        if key not in ("alerts", "updates_at_first_boot"):
             errors.append(f"security.{key}: unknown key")
 
     alerts = security.get("alerts")
@@ -520,9 +593,11 @@ def _validate_security(security: Any) -> list[str]:
                 "security.alerts: must be 'skip' or an email address"
             )
 
-    updates = security.get("updates")
+    updates = security.get("updates_at_first_boot")
     if updates is not None and str(updates).lower() not in ("skip", "force"):
-        errors.append("security.updates: must be 'skip' or 'force'")
+        errors.append(
+            "security.updates_at_first_boot: must be 'skip' or 'force'"
+        )
     return errors
 
 
