@@ -13,6 +13,13 @@ REDIRECT_OUTPUT="${REDIRECT_OUTPUT,,}"
 PID=
 REBOOT_REQUIRED=
 
+# the hooks read $INITHOOKS_CONF, and some of them write it: 29preseed of
+# the headless and qemu overlays creates the file, and 00declarative renders
+# it from the instance description. Export it whether or not it exists yet,
+# or a hook whose job is to create it gets an empty path and an ambiguous
+# redirect instead.
+export INITHOOKS_CONF="${INITHOOKS_CONF:-/etc/inithooks.conf}"
+
 # load preseeds if they exist - although preseeds file should always be empty
 # unless RUN_FIRSTBOOT=true (firstboot will wipe preseeds file)
 if [[ -f $INITHOOKS_CONF ]]; then
@@ -20,7 +27,6 @@ if [[ -f $INITHOOKS_CONF ]]; then
     # include an example conf file?!
     # shellcheck source=/dev/null
     source "$INITHOOKS_CONF"
-    export INITHOOKS_CONF="$INITHOOKS_CONF"
 fi
 
 # ensure that log file exists and has appropriate permissions

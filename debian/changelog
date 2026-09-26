@@ -1,3 +1,15 @@
+inithooks (2.3.6+keel3) trixie; urgency=low
+
+  * run: export INITHOOKS_CONF whether or not the file exists. It was
+    exported only inside the test that sources it, so a hook whose job is to
+    create the file got an empty path: 29preseed of the headless and qemu
+    overlays failed with an ambiguous redirect on every headless first boot,
+    and no hook that ran after the file was created could read it by name.
+  * tests: test-run.bats, the contract between the runner and a hook,
+    including the real 29preseed of the buildtasks overlay.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Sat, 26 Sep 2026 20:57:50 +0000
+
 inithooks (2.3.6+keel2) trixie; urgency=low
 
   * 00declarative: read /etc/keel/instance.yaml, and /etc/inithooks.yaml when
