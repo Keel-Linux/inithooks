@@ -1,3 +1,19 @@
+inithooks (2.3.6+keel4) trixie; urgency=low
+
+  * declarative: rename security.updates to security.updates_at_first_boot,
+    which is what the field controls; the old name is still read, renders the
+    same conf and is reported once with its replacement.
+  * declarative: add canonical() and deprecations(), the one place where a
+    renamed field is translated, and validate() and render_env() read through
+    them so an out of date description gets real errors instead of "unknown
+    key".
+  * declarative.py: report a deprecated field name on stderr and in the log.
+  * tests: test_vocabulary.py freezes the vocabulary this reader accepts and,
+    with KEEL_SRC pointing at the instance tooling, runs both readers over
+    one document and compares their rename tables.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Sat, 26 Sep 2026 21:09:03 +0000
+
 inithooks (2.3.6+keel3) trixie; urgency=low
 
   * run: export INITHOOKS_CONF whether or not the file exists. It was

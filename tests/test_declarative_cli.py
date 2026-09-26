@@ -243,6 +243,31 @@ class TestApply(CLITestCase):
         self.assertIn("tls.acme", logged[1])
 
 
+class TestDeprecatedNames(CLITestCase):
+    DEPRECATED = "version: 1\nsecurity:\n  updates: force\n"
+
+    def test_check_warns_and_still_says_ok(self):
+        path = self.write_decl(self.DEPRECATED)
+        code, out, err = self.run_cli("--check", path)
+        self.assertEqual((code, out), (0, f"{path}: ok\n"))
+        self.assertIn("security.updates is deprecated", err)
+        self.assertIn("warning", {level for level, _ in self.log.entries})
+
+    def test_apply_warns_and_renders_the_current_variable(self):
+        path = self.write_decl(self.DEPRECATED)
+        code, _, err = self.run_cli("--apply", path, f"--conf={self.conf}")
+        self.assertEqual(code, 0)
+        self.assertIn("rename it to security.updates_at_first_boot", err)
+        with open(self.conf) as fob:
+            self.assertIn("export SEC_UPDATES=FORCE", fob.read())
+
+    def test_a_current_name_warns_about_nothing(self):
+        path = self.write_decl(
+            "version: 1\nsecurity:\n  updates_at_first_boot: force\n"
+        )
+        self.assertEqual(self.run_cli("--check", path)[2], "")
+
+
 class TestWhich(CLITestCase):
     """--which answers the question the first boot hook asks"""
 
