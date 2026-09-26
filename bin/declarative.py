@@ -3,13 +3,17 @@
 """Translate a declarative instance description into inithooks.conf
 
 Arguments:
-    file            declarative file to read; defaults to $INITHOOKS_DECL
-                    or /etc/inithooks.yaml
+    file            declarative file to read; when it is not given, the
+                    file named by $INITHOOKS_DECL, or the first of
+                    /etc/keel/instance.yaml and /etc/inithooks.yaml that
+                    exists
 
 Options:
     -c --check      validate the file and exit
     -r --render     print the rendered conf with the secrets masked
     -a --apply      write the rendered conf
+    -w --which      print the file that would be read and exit; prints
+                    nothing when there is none
     --conf=         conf file to write; defaults to $INITHOOKS_CONF
                     or /etc/inithooks.conf
 
@@ -81,8 +85,8 @@ def apply(doc: dict, path: str, conf: str) -> None:
 def main():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
-        l_opts = ["help", "check", "render", "apply", "conf="]
-        opts, args = getopt.gnu_getopt(sys.argv[1:], "hcra", l_opts)
+        l_opts = ["help", "check", "render", "apply", "which", "conf="]
+        opts, args = getopt.gnu_getopt(sys.argv[1:], "hcraw", l_opts)
     except getopt.GetoptError as e:
         usage(e)
 
@@ -100,15 +104,32 @@ def main():
             action = "render"
         elif opt in ("-a", "--apply"):
             action = "apply"
+        elif opt in ("-w", "--which"):
+            action = "which"
         elif opt == "--conf":
             conf = val
 
     if not action:
-        usage("one of --check, --render or --apply is required")
+        usage("one of --check, --render, --apply or --which is required")
 
-    path = args[0] if args else os.environ.get(
-        "INITHOOKS_DECL", declarative.DECL_DEFAULT
-    )
+    if args:
+        path, ignored = args[0], ()
+    else:
+        path, ignored = declarative.resolve_path()
+
+    for other in ignored:
+        log(f"reading {path}, ignoring {other}", "warning")
+        print(f"warning: reading {path}, ignoring {other}", file=sys.stderr)
+
+    if action == "which":
+        if path and os.path.exists(path):
+            print(path)
+        sys.exit(0)
+
+    if path is None:
+        log("no declarative description found, nothing to do", "debug")
+        sys.exit(0)
+
     if not os.path.exists(path):
         log(f"{path} not found, nothing to do", "debug")
         sys.exit(0)
