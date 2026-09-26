@@ -1,5 +1,8 @@
 INITHOOKS_CONF=/etc/inithooks.conf
-INITHOOKS_DECL=/etc/inithooks.yaml
+# The declarative instance description. Left unset, inithooks reads
+# /etc/keel/instance.yaml, and /etc/inithooks.yaml when that one is absent;
+# set this to name a different file and no search happens.
+#INITHOOKS_DECL=
 INITHOOKS_PATH=/usr/lib/inithooks
 INITHOOKS_LOGFILE=/var/log/inithooks.log
 

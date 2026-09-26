@@ -243,6 +243,64 @@ class TestApply(CLITestCase):
         self.assertIn("tls.acme", logged[1])
 
 
+class TestWhich(CLITestCase):
+    """--which answers the question the first boot hook asks"""
+
+    def test_it_prints_the_file_the_search_finds(self):
+        path = self.write_decl(VALID, name="instance.yaml")
+        with mock.patch.object(declarative, "DECL_PATHS", (path,)):
+            code, out, err = self.run_cli("--which")
+        self.assertEqual((code, out, err), (0, f"{path}\n", ""))
+
+    def test_the_short_option_is_accepted(self):
+        path = self.write_decl(VALID, name="instance.yaml")
+        with mock.patch.object(declarative, "DECL_PATHS", (path,)):
+            self.assertEqual(self.run_cli("-w")[1], f"{path}\n")
+
+    def test_it_prints_nothing_when_no_candidate_exists(self):
+        absent = join(self.tmpdir, "absent.yaml")
+        with mock.patch.object(declarative, "DECL_PATHS", (absent,)):
+            code, out, err = self.run_cli("--which")
+        self.assertEqual((code, out, err), (0, "", ""))
+
+    def test_a_second_candidate_is_named_as_ignored(self):
+        first = self.write_decl(VALID, name="instance.yaml")
+        second = self.write_decl(VALID, name="inithooks.yaml")
+        with mock.patch.object(declarative, "DECL_PATHS", (first, second)):
+            code, out, err = self.run_cli("--which")
+        self.assertEqual((code, out), (0, f"{first}\n"))
+        self.assertIn(f"reading {first}, ignoring {second}", err)
+        self.assertIn(("warning", f"reading {first}, ignoring {second}"),
+                      self.log.entries)
+
+    def test_an_explicit_file_is_printed_without_a_search(self):
+        path = self.write_decl(VALID)
+        absent = join(self.tmpdir, "absent.yaml")
+        with mock.patch.object(declarative, "DECL_PATHS", (absent,)):
+            self.assertEqual(self.run_cli("--which", path)[1], f"{path}\n")
+
+
+class TestSearchFromTheCommandLine(CLITestCase):
+    def test_apply_reads_the_file_the_search_finds(self):
+        path = self.write_decl(VALID, name="instance.yaml")
+        with mock.patch.object(declarative, "DECL_PATHS", (path,)):
+            code, _, err = self.run_cli("--apply", f"--conf={self.conf}")
+        self.assertEqual((code, err), (0, ""))
+        with open(self.conf) as fob:
+            self.assertIn("HOSTNAME", fob.read())
+
+    def test_finding_nothing_is_a_no_op_that_exits_0(self):
+        absent = join(self.tmpdir, "absent.yaml")
+        with mock.patch.object(declarative, "DECL_PATHS", (absent,)):
+            code, out, err = self.run_cli("--apply", f"--conf={self.conf}")
+        self.assertEqual((code, out, err), (0, "", ""))
+        self.assertFalse(os.path.exists(self.conf))
+        self.assertIn(
+            ("debug", "no declarative description found, nothing to do"),
+            self.log.entries,
+        )
+
+
 class TestUsage(CLITestCase):
     def assert_usage(self, *argv: str, message: str = "") -> None:
         code, out, err = self.run_cli(*argv)
@@ -267,7 +325,7 @@ class TestUsage(CLITestCase):
     def test_no_action(self):
         self.assert_usage(
             "inithooks.yaml",
-            message="one of --check, --render or --apply is required",
+            message="one of --check, --render, --apply or --which is required",
         )
 
 

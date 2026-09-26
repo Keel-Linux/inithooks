@@ -383,14 +383,29 @@ Declarative preseeding
 ----------------------
 
 Instead of writing /etc/inithooks.conf by hand, an instance can be described
-in /etc/inithooks.yaml. At the start of the first boot, the firstboot hook
+in a YAML file. At the start of the first boot, the firstboot hook
 00declarative validates the description, resolves the secrets it refers to
 and writes /etc/inithooks.conf from it. Every later hook reads the same
 variables it has always read, so nothing else changes.
 
-The path can be changed with INITHOOKS_DECL in /etc/default/inithooks. If
-/etc/inithooks.yaml does not exist, or if /etc/inithooks.conf already exists
-and is not empty, the hook does nothing and the conf file wins. Unlike the
+Two paths are searched, in this order, and the first one that exists is
+read:
+
+1. /etc/keel/instance.yaml, the instance description the operator edits and
+   the instance tooling writes;
+2. /etc/inithooks.yaml.
+
+Both hold the same document, so it does not matter to the reader which one
+carries it, and a machine that has only the second keeps working. When both
+exist the first wins and the other is named in a warning in the log, so a
+description that is being ignored says so instead of being silently passed
+over. `declarative.py --which` prints the path that would be read, which is
+how the hook asks, and prints nothing when neither is there.
+
+Setting INITHOOKS_DECL in /etc/default/inithooks names the file outright and
+no search happens. If no description is found, or if /etc/inithooks.conf
+already exists and is not empty, the hook does nothing and the conf file
+wins. Unlike the
 conf file, the description is not blanked at the end of the first boot: it
 holds references to secrets, not the secrets themselves, and it stays on the
 instance as a record of what the instance was asked to be.
@@ -485,8 +500,9 @@ Notes:
 
 The description can be validated before it is used::
 
-    /usr/lib/inithooks/bin/declarative.py --check /etc/inithooks.yaml
-    /usr/lib/inithooks/bin/declarative.py --render /etc/inithooks.yaml
+    /usr/lib/inithooks/bin/declarative.py --which
+    /usr/lib/inithooks/bin/declarative.py --check /etc/keel/instance.yaml
+    /usr/lib/inithooks/bin/declarative.py --render /etc/keel/instance.yaml
 
 --render prints the conf file that would be written, with the secrets
 masked.

@@ -1,3 +1,17 @@
+inithooks (2.3.6+keel2) trixie; urgency=low
+
+  * 00declarative: read /etc/keel/instance.yaml, and /etc/inithooks.yaml when
+    that one is absent, instead of the second path only. The first appliance
+    boot wrote the description to the first path and the hook read the
+    second, so the description was ignored and the instance came up from an
+    empty conf.
+  * declarative.py: add --which, which prints the description that would be
+    read, and name an ignored candidate in a warning when both exist.
+  * default/inithooks: leave INITHOOKS_DECL unset by default, so the search
+    happens; setting it still names a file outright.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Sat, 26 Sep 2026 20:11:13 +0000
+
 inithooks (2.3.6+keel1) trixie; urgency=low
 
   * 01ipconfig: append the static options instead of overwriting the file.

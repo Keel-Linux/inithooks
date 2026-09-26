@@ -15,6 +15,7 @@ import re
 import secrets as secrets_module
 import shlex
 import subprocess
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import yaml
@@ -27,6 +28,12 @@ except Exception:
     validate_domain = None
 
 DECL_DEFAULT = "/etc/inithooks.yaml"
+# Where a declarative description is looked for when the environment does
+# not name one, in the order they are tried. The instance path comes first
+# because it is the file the operator edits and the tooling writes; the
+# inithooks path is kept so that a machine carrying only it keeps working.
+# Upstream builds this tuple from DECL_DEFAULT alone.
+DECL_PATHS = ("/etc/keel/instance.yaml", DECL_DEFAULT)
 CONF_DEFAULT = "/etc/inithooks.conf"
 LXC_MARKER = "/var/lib/turnkey-info/inithooks.service/lxc"
 
@@ -66,6 +73,35 @@ _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 class DeclarativeError(Exception):
     pass
+
+
+def resolve_path(
+    env: Mapping[str, str] | None = None,
+    exists: Callable[[str], bool] = os.path.exists,
+) -> tuple[str | None, tuple[str, ...]]:
+    """The declarative description to read, and the ones left unread
+
+    Returns the path and the candidates that exist but are not used. The
+    path is None when the environment names nothing and no candidate is
+    there, which is the ordinary state of an image that does not use a
+    declarative description.
+
+    INITHOOKS_DECL in the environment names the file exactly and no search
+    happens, so an operator can point the hook at any path and a caller
+    that finds nothing there still reports that path by name.
+
+    Pure but for the two injected lookups, so the search order is testable
+    without a filesystem.
+    """
+    environment = os.environ if env is None else env
+    named = (environment.get("INITHOOKS_DECL") or "").strip()
+    if named:
+        return named, ()
+
+    found = tuple(path for path in DECL_PATHS if exists(path))
+    if not found:
+        return None, ()
+    return found[0], found[1:]
 
 
 def load(path: str) -> dict:

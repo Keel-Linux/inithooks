@@ -8,7 +8,6 @@ INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
 # shellcheck source=default/inithooks
 source "$INITHOOKS_DEFAULT"
 
-INITHOOKS_DECL="${INITHOOKS_DECL:-/etc/inithooks.yaml}"
 export INITHOOKS_LOGFILE
 
 if [[ -n "$_TURNKEY_INIT" ]]; then
@@ -16,7 +15,19 @@ if [[ -n "$_TURNKEY_INIT" ]]; then
     exit 0
 fi
 
-if [[ ! -e "$INITHOOKS_DECL" ]]; then
+# INITHOOKS_DECL names the file outright when it is set; with nothing set,
+# declarative.py --which answers with the first of its candidates that is
+# there, and with nothing at all when the image carries no description.
+if [[ -z "$INITHOOKS_DECL" ]]; then
+    if ! INITHOOKS_DECL=$("$INITHOOKS_PATH/bin/declarative.py" --which); then
+        # a reader that cannot run cannot say there is a description; the
+        # boot carries on as an image without one, and says why
+        echo "warning: declarative.py --which failed, no description read" >&2
+        exit 0
+    fi
+fi
+
+if [[ -z "$INITHOOKS_DECL" ]] || [[ ! -e "$INITHOOKS_DECL" ]]; then
     exit 0
 fi
 
