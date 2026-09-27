@@ -251,7 +251,7 @@ class TestDeprecatedNames(CLITestCase):
         code, out, err = self.run_cli("--check", path)
         self.assertEqual((code, out), (0, f"{path}: ok\n"))
         self.assertIn("security.updates is deprecated", err)
-        self.assertIn("warning", {level for level, _ in self.log.entries})
+        self.assertIn("warn", {level for level, _ in self.log.entries})
 
     def test_apply_warns_and_renders_the_current_variable(self):
         path = self.write_decl(self.DEPRECATED)
@@ -295,7 +295,7 @@ class TestWhich(CLITestCase):
             code, out, err = self.run_cli("--which")
         self.assertEqual((code, out), (0, f"{first}\n"))
         self.assertIn(f"reading {first}, ignoring {second}", err)
-        self.assertIn(("warning", f"reading {first}, ignoring {second}"),
+        self.assertIn(("warn", f"reading {first}, ignoring {second}"),
                       self.log.entries)
 
     def test_an_explicit_file_is_printed_without_a_search(self):
@@ -303,6 +303,30 @@ class TestWhich(CLITestCase):
         absent = join(self.tmpdir, "absent.yaml")
         with mock.patch.object(declarative, "DECL_PATHS", (absent,)):
             self.assertEqual(self.run_cli("--which", path)[1], f"{path}\n")
+
+
+class TestLoggingNeverKillsTheHook(CLITestCase):
+    """A log line is a side effect; rendering the conf file is the job"""
+
+    def test_a_level_the_logger_refuses_goes_to_stderr_instead(self):
+        from libinithooks.inithooks_log import InitLogError
+
+        path = self.write_decl("version: 1\nsecurity:\n  updates: force\n")
+        refusing = mock.Mock()
+        refusing.write.side_effect = InitLogError("invalid log level 'nope'")
+        with mock.patch.object(cli, "LOG", refusing):
+            code, out, err = self.run_cli("--check", path)
+        self.assertEqual((code, out), (0, f"{path}: ok\n"))
+        self.assertIn("is deprecated", err)
+
+    def test_every_level_this_script_uses_is_one_the_logger_accepts(self):
+        from libinithooks.inithooks_log import LOG_LEVELS
+        import re
+
+        source = open(SCRIPT).read()
+        used = set(re.findall(r'log\([^)]*?,\s*"([a-z]+)"\s*\)', source))
+        self.assertTrue(used)
+        self.assertEqual(used - set(LOG_LEVELS), set())
 
 
 class TestSearchFromTheCommandLine(CLITestCase):

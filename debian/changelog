@@ -1,3 +1,14 @@
+inithooks (2.3.6+keel5) trixie; urgency=high
+
+  * declarative.py: log a deprecated field name at level "warn". It passed
+    "warning", which the inithooks logger refuses, and log() caught only
+    OSError, so InitLogError killed 00declarative on every boot where both
+    candidate description paths exist and no description was rendered at all.
+  * declarative.py: a log line can no longer stop the hook; a level the logger
+    refuses goes to stderr like a log file that cannot be written.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Sun, 27 Sep 2026 03:21:04 +0000
+
 inithooks (2.3.6+keel4) trixie; urgency=low
 
   * declarative: rename security.updates to security.updates_at_first_boot,
