@@ -28,15 +28,25 @@ import sys
 from typing import NoReturn
 
 from libinithooks import declarative
+from libinithooks import inithooks_log as declarative_log
 from libinithooks.inithooks_log import InitLog
 
 LOG = InitLog("00declarative")
 
 
 def log(msg: str, level: str = "info") -> None:
+    """Write one line to the inithooks log, and never die for it
+
+    The log is a side effect of a hook whose job is to render the conf file,
+    so nothing it does may stop that: a log file that cannot be written and a
+    level this version of the logger does not accept both end up on stderr
+    instead. InitLogError is what the logger raises for a level outside
+    err|warn|info|debug, and it killed this script on every boot where a
+    deprecated field name was reported.
+    """
     try:
         LOG.write(msg, level)
-    except OSError:
+    except (OSError, declarative_log.InitLogError):
         print(f"{level}: {msg}", file=sys.stderr)
 
 
@@ -118,7 +128,7 @@ def main():
         path, ignored = declarative.resolve_path()
 
     for other in ignored:
-        log(f"reading {path}, ignoring {other}", "warning")
+        log(f"reading {path}, ignoring {other}", "warn")
         print(f"warning: reading {path}, ignoring {other}", file=sys.stderr)
 
     if action == "which":
@@ -136,7 +146,7 @@ def main():
 
     doc = read(path)
     for message in declarative.deprecations(doc):
-        log(f"{path}: {message}", "warning")
+        log(f"{path}: {message}", "warn")
         print(f"warning: {path}: {message}", file=sys.stderr)
     if action == "check":
         print(f"{path}: ok")
