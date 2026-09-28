@@ -1,3 +1,23 @@
+inithooks (2.3.6+keel6) trixie; urgency=high
+
+  * 29tagid: the first boot page carries no third party script. It loaded two
+    from ajax.turnkeylinux.org, naming the build, the version and the
+    appliance in the URL path, and a jQuery from ajax.googleapis.com that
+    nothing on the page used. Both ran in the operator's browser on a machine
+    nobody had logged into yet, and neither could be attested by keel verify,
+    which can account for every byte in the layer and nothing fetched at view
+    time. The turnkeylinux endpoints answer 404 today, so what shipped was a
+    beacon to a service that no longer exists.
+  * tagid.sh: drop tagid_render_scripts, tagid_is_tagged, tagid_version and
+    tagid_build, which existed only to build those URLs; add
+    tagid_strip_remote_scripts, so an index inherited in /var from an older
+    image loses the scripts it carried rather than serving them forever.
+  * 29tagid: no longer reads /etc/apt/apt.conf.d/01turnkey. The build tag it
+    parsed out of the apt User-Agent had no other consumer, and common
+    removes that file (Keel-Linux/common#6).
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Mon, 28 Sep 2026 06:40:00 +0000
+
 inithooks (2.3.6+keel5) trixie; urgency=high
 
   * declarative.py: log a deprecated field name at level "warn". It passed

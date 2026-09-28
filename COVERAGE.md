@@ -21,6 +21,42 @@ project-authored code, with the inherited modules without tests omitted in
 `pyproject.toml` until their tests land. Both thresholds are only ever
 raised. The sections that follow record the state before the merges.
 
+## Branch fix/no-third-party-script: the first boot page (2026-09-28)
+
+`firstboot.d/29tagid` and `lib/tagid.sh` stop putting a third party script
+on the page the appliance serves before anybody has logged in
+(Keel-Linux/inithooks#13). `tests/test-tagid.bats` grows from 14 to 27
+tests. Measured with kcov 43 and bats 1.11, 124 bats over the six files:
+
+| File | Before | After |
+| --- | --- | --- |
+| `firstboot.d/29tagid` | 19/19 | 17/17, 100 percent |
+| `lib/tagid.sh` | 8/8 | 2/2, 100 percent |
+
+Both files shrank because four functions went away with the scripts they
+built. Total 99.53 (was 99.40). The lowest file is still
+`lib/init-fence.sh` at 98.44, so the shell gate stays at 98. Python is
+untouched: 187 passed, 3 skipped.
+
+**What is asserted, and what is not.** The verdict is taken from the
+rendered page, not from the source of the hook: the page is parsed for
+every host a `<script>`, `<link>`, `<img>` or `<iframe>` would fetch from,
+and that set has to be empty. A grep for one known hostname would pass the
+day somebody adds a different one, which is how the jQuery from
+`ajax.googleapis.com` survived next to the two scripts the issue named. An
+`<a href>` is deliberately not in that set: a link is somewhere the
+operator may choose to go, not something the page loads.
+
+Both the packaged page and a page inherited in `/var` from an older image
+are covered, because `/var` survives and `29tagid` is the only thing that
+looks at that copy again. The failure path of the rewrite has a test too:
+with `perl` stubbed to fail, the index is left byte for byte as it was and
+no `.tmp` is left behind, which is the `docs/traps.md` entry "gpg truncates
+its output file before asking for the passphrase".
+
+Refutations use `run !`, never a bare `! cmd`: bash does not apply errexit
+to a negated command, so a bare one passes whatever happens.
+
 ## Branch feat/ip6-preseed: IPv6 preseed keys in 01ipconfig (2026-09-26)
 
 Adds `IP6_CONFIG`, `IP6_ADDRESS`, `IP6_GW`, `IP6_DNS1` and `IP6_DNS2` to
