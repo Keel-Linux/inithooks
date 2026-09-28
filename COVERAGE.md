@@ -4,6 +4,29 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/fence-no-silent-skip: shell 99.57 percent (2026-09-28)
+
+`lib/init-fence.sh` gains `fence_close_port` and `fence_open_port`, and
+`iptables_add_redirect` refuses a port it cannot redirect instead of leaving
+it open. `tests/test-init-fence.bats` grows from 27 to 31 tests (116 bats
+over the six files): the refusal for one family and for both, the insertion
+first in the INPUT chain so it precedes the appliance's own ACCEPT rules,
+the removal loop, the fatal path when a port can be neither redirected nor
+refused, and the same path through the script, which is the one that proves
+the library stops its caller rather than dying invisibly.
+
+Measured with kcov 43: `bin/turnkey-init-fence` 28/28, `lib/init-fence.sh`
+78/79 (98.73), `firstboot.d/01ipconfig` 29/29, `lib/ipconfig.sh` 72/72,
+`firstboot.d/29tagid` 19/19, `lib/tagid.sh` 8/8, total 99.57.
+
+The one uncovered line of `lib/init-fence.sh` is line 154, the first line of
+the multi-line `simplehttpd.py` invocation, which kcov attributes to a later
+line. It is the same line that was uncovered before this branch, and it is
+not part of this change. Every line this branch adds is covered.
+
+The shell gate stays at 98, the lowest file rounded down; 98.73 clears it
+and decision 0003's 95 percent bar for a file a change touches.
+
 ## Measured baseline on master: shell 98 percent, Python 99 percent (2026-09-26)
 
 Pull requests #1 to #4 merged on 2026-09-26 (merge commits 4e09d1e, a20a94a,
