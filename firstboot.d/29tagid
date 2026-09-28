@@ -1,23 +1,20 @@
 #!/bin/bash
 
-# tag the init-fence index page with the appliance name, version and build;
-# parsing and rendering live in lib/tagid.sh
+# name the init-fence index page after the appliance, and make sure the page
+# it serves fetches nothing from anybody else; parsing lives in lib/tagid.sh
 
 [ -n "$_TURNKEY_INIT" ] && exit 0
 
 INITHOOKS_PATH="${INITHOOKS_PATH:-/usr/lib/inithooks}"
 INITFENCE_DEFAULT="${INITFENCE_DEFAULT:-/etc/default/turnkey-init-fence}"
 TURNKEY_VERSION_FILE="${TURNKEY_VERSION_FILE:-/etc/turnkey_version}"
-APT_CONF_TURNKEY="${APT_CONF_TURNKEY:-/etc/apt/apt.conf.d/01turnkey}"
 
 # shellcheck source=lib/tagid.sh
 source "$INITHOOKS_PATH/lib/tagid.sh"
 
 APP_NAME=$(tagid_app_name "$(< "$TURNKEY_VERSION_FILE")")
-VERSION=$(tagid_version "$(< "$TURNKEY_VERSION_FILE")")
-BUILD=$(tagid_build "$(< "$APT_CONF_TURNKEY")")
 
-### initfence 
+### initfence
 
 # shellcheck source=default/turnkey-init-fence
 source "$INITFENCE_DEFAULT"
@@ -30,8 +27,15 @@ fi
 INITFENCE_INDEX="$HTDOCS/index.html"
 sed -i "s|@APP_NAME@|$APP_NAME|" $INITFENCE_INDEX
 
-if ! tagid_is_tagged "$INITFENCE_INDEX"; then
-    tagid_render_scripts "$BUILD" "$VERSION" "$APP_NAME" >> "$INITFENCE_INDEX"
+# the page carries no remote script. The packaged one has none; a copy in
+# /var inherited from an image built before Keel-Linux/inithooks#13 does, and
+# this is the only thing that ever looks at it again. Written to a temporary
+# file and moved into place, so a failure here cannot leave the index
+# truncated and the fence with nothing to serve.
+if tagid_strip_remote_scripts < "$INITFENCE_INDEX" > "$INITFENCE_INDEX.tmp"; then
+    mv "$INITFENCE_INDEX.tmp" "$INITFENCE_INDEX"
+else
+    rm -f "$INITFENCE_INDEX.tmp"
 fi
 
 # reload init-fence to pick up the updated index (if it is not running there
