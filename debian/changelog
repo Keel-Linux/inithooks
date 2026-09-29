@@ -1,4 +1,4 @@
-inithooks (2.3.6+keel6) trixie; urgency=high
+inithooks (2.3.6+keel7) trixie; urgency=high
 
   * 29tagid: the first boot page carries no third party script. It loaded two
     from ajax.turnkeylinux.org, naming the build, the version and the
@@ -9,9 +9,16 @@ inithooks (2.3.6+keel6) trixie; urgency=high
     time. The turnkeylinux endpoints answer 404 today, so what shipped was a
     beacon to a service that no longer exists.
   * tagid.sh: drop tagid_render_scripts, tagid_is_tagged, tagid_version and
-    tagid_build, which existed only to build those URLs; add
-    tagid_strip_remote_scripts, so an index inherited in /var from an older
-    image loses the scripts it carried rather than serving them forever.
+    tagid_build, which existed only to build those URLs.
+  * 29tagid: the fence pages in /var are rebuilt from the packaged ones on
+    every run, not edited, so pages inherited from an older image lose
+    whatever they loaded from another host, however it was written. The
+    new copy is built beside the served directory and swapped in; if that
+    fails the /var copy is removed and the fence serves the packaged pages.
+    It runs under turnkey-init too, which is how a machine whose first boot
+    did not complete, or one initialised before this version, gets its
+    pages replaced; until then such a machine keeps the old page, which is
+    served only while the fence is up.
   * 29tagid: no longer reads /etc/apt/apt.conf.d/01turnkey. The build tag it
     parsed out of the apt User-Agent had no other consumer, and common
     removes that file (Keel-Linux/common#6).
