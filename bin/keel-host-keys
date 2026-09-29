@@ -19,6 +19,10 @@
 # afterwards, so the unit fails and `systemctl --failed` says so.
 set -u
 
+# every key this writes, or a generator it calls writes, is private from the
+# first byte, whatever each program does with its own mode
+umask 077
+
 SSH_DIR=${SSH_DIR:-/etc/ssh}
 SSH_KEY_TYPES=${SSH_KEY_TYPES:-rsa ecdsa ed25519}
 TLS_KEY=${TLS_KEY:-/etc/ssl/private/cert.key}

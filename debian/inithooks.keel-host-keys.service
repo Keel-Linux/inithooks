@@ -4,12 +4,20 @@ Documentation=https://github.com/Keel-Linux/keel-core/issues/8
 # A layer ships no private key, so the keys the services below read are
 # generated here, on the machine, before any of them starts, and a key that
 # was published inside a Keel image is replaced. See bin/keel-host-keys.
-# ssh.socket is not listed: it only listens, and the sshd it spawns per
-# connection starts after this unit has finished.
+#
+# No Condition: a skipped unit is not a failed one, and a machine whose /etc
+# cannot be written must show up in `systemctl --failed`, not start its
+# services on whatever keys it has.
+#
+# ssh.socket cannot be ordered after this unit (sockets start before
+# basic.target, this unit after it). Debian ships it disabled; where it is
+# enabled, a connection in the first seconds of boot reaches an sshd before
+# this unit has run: on an image built since keel-core#8 that sshd has no
+# host key and refuses it; on an older image it answers with the shared key
+# until this unit replaces it.
 Before=ssh.service webmin.service inithooks.service turnkey-init-fence.service
 Before=apache2.service nginx.service lighttpd.service tomcat10.service tomcat11.service
 Before=postgresql.service postfix.service
-ConditionPathIsReadWrite=/etc
 
 [Service]
 Type=oneshot
