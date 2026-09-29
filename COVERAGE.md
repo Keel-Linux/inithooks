@@ -57,6 +57,20 @@ its output file before asking for the passphrase".
 Refutations use `run !`, never a bare `! cmd`: bash does not apply errexit
 to a negated command, so a bare one passes whatever happens.
 
+After review (2026-09-29): the strip and the detector shared a blind spot
+(double quoted attributes of four elements), so an unquoted
+`<script src=...>`, a remote stylesheet, image or frame got past both.
+`29tagid` no longer strips anything: it rebuilds the `/var` copy from the
+packaged pages on every run, beside the served directory, and swaps it in;
+`lib/tagid.sh` is down to `tagid_app_name`, 1/1, and `29tagid` is 29/29.
+The pages are now judged by two detectors that share no parser:
+`tests/remote_loads.py` (HTMLParser, every attribute and style construct
+that fetches, with its own 9 Python tests and 48 cases) and a tag level
+regular expression that knows no HTML, and each hostile page the review
+measured, plus parser differentials such as `<!--><img src=...>`, is
+served as an inherited page and must be gone. `tests/test-tagid.bats` has
+27 tests, 125 bats in all, total 99.55; Python 196 passed, 3 skipped.
+
 ## Branch feat/ip6-preseed: IPv6 preseed keys in 01ipconfig (2026-09-26)
 
 Adds `IP6_CONFIG`, `IP6_ADDRESS`, `IP6_GW`, `IP6_DNS1` and `IP6_DNS2` to

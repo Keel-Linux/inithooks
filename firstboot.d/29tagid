@@ -1,9 +1,26 @@
 #!/bin/bash
 
-# name the init-fence index page after the appliance, and make sure the page
-# it serves fetches nothing from anybody else; parsing lives in lib/tagid.sh
-
-[ -n "$_TURNKEY_INIT" ] && exit 0
+# Serve the packaged init fence pages, named after the appliance, and
+# nothing else.
+#
+# HTDOCS is in /var, and /var survives: an image built before
+# Keel-Linux/inithooks#13 left an index there that loads scripts from
+# another host, and this hook is the only thing that ever looks at it again.
+# So HTDOCS is not edited, it is rebuilt from the packaged copy on every
+# run: a page the package did not ship is not served, whatever it contains
+# and however it is written. An earlier version of this hook stripped remote
+# <script> elements with a regular expression, and review measured what got
+# past it (unquoted attributes, stylesheets, images, frames); an HTML parser
+# would have its own differences from a browser. Nothing in the tree writes
+# a page into HTDOCS but this hook, so rebuilding it costs nothing.
+#
+# It runs under turnkey-init as well: that is what an operator runs when the
+# first boot did not complete, with the fence up and the old page in /var.
+#
+# The new copy is built beside HTDOCS, not in it (the fence serves HTDOCS),
+# and swapped in with two renames. If the build fails, HTDOCS is removed:
+# the fence serves the packaged htdocs when the writable copy is missing, so
+# a failure serves the page with '@APP_NAME@' in it rather than an old one.
 
 INITHOOKS_PATH="${INITHOOKS_PATH:-/usr/lib/inithooks}"
 INITFENCE_DEFAULT="${INITFENCE_DEFAULT:-/etc/default/turnkey-init-fence}"
@@ -14,32 +31,43 @@ source "$INITHOOKS_PATH/lib/tagid.sh"
 
 APP_NAME=$(tagid_app_name "$(< "$TURNKEY_VERSION_FILE")")
 
-### initfence
-
 # shellcheck source=default/turnkey-init-fence
 source "$INITFENCE_DEFAULT"
 
-if [[ ! -d "$HTDOCS" ]]; then
-    mkdir -p "$(dirname "$HTDOCS")"
-    cp -R "$INITHOOKS_PATH/turnkey-init-fence/htdocs" "$(dirname "$HTDOCS")"
+PACKAGED_HTDOCS="$INITHOOKS_PATH/turnkey-init-fence/htdocs"
+HTDOCS="${HTDOCS:?HTDOCS is not set in $INITFENCE_DEFAULT}"
+PARENT=$(dirname "$HTDOCS")
+NEW=
+OLD=
+
+# install_htdocs
+# Builds the pages in NEW beside HTDOCS and swaps them in. Returns non-zero
+# at the first step that fails, with HTDOCS either untouched or gone, never
+# half written.
+install_htdocs() {
+    mkdir -p "$PARENT" || return
+    NEW=$(mktemp -d "$PARENT/.htdocs.new.XXXXXX") || return
+    OLD="$PARENT/.htdocs.old.${NEW##*.}"
+    cp -R "$PACKAGED_HTDOCS/." "$NEW/" || return
+    sed -i "s|@APP_NAME@|$APP_NAME|" "$NEW/index.html" || return
+    chmod 0755 "$NEW" || return
+    if [[ -e "$HTDOCS" ]]; then
+        mv -T "$HTDOCS" "$OLD" || return
+    fi
+    mv -T "$NEW" "$HTDOCS" || return
+    rm -rf "$OLD"
+}
+
+if ! install_htdocs; then
+    echo "<3>cannot render the fence pages; serving the packaged ones" >&2
+    [[ -z "$NEW" ]] || rm -rf "$NEW"
+    [[ -z "$OLD" ]] || rm -rf "$OLD"
+    rm -rf "$HTDOCS"
+    exit 1
 fi
 
-INITFENCE_INDEX="$HTDOCS/index.html"
-sed -i "s|@APP_NAME@|$APP_NAME|" $INITFENCE_INDEX
-
-# the page carries no remote script. The packaged one has none; a copy in
-# /var inherited from an image built before Keel-Linux/inithooks#13 does, and
-# this is the only thing that ever looks at it again. Written to a temporary
-# file and moved into place, so a failure here cannot leave the index
-# truncated and the fence with nothing to serve.
-if tagid_strip_remote_scripts < "$INITFENCE_INDEX" > "$INITFENCE_INDEX.tmp"; then
-    mv "$INITFENCE_INDEX.tmp" "$INITFENCE_INDEX"
-else
-    rm -f "$INITFENCE_INDEX.tmp"
-fi
-
-# reload init-fence to pick up the updated index (if it is not running there
-# is nothing to reload; it reads the index when it starts)
+# reload init-fence to pick up the updated pages (if it is not running there
+# is nothing to reload; it reads them when it starts)
 if systemctl is-active --quiet turnkey-init-fence; then
     systemctl reload turnkey-init-fence
 fi
