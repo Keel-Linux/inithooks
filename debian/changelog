@@ -1,3 +1,22 @@
+inithooks (2.3.6+keel6) trixie; urgency=high
+
+  * keel-host-keys.service: generate the SSH host keys, the TLS pair in
+    /etc/ssl/private and, where ssl-cert is installed, the snakeoil pair,
+    before sshd, Webmin, the web servers, PostgreSQL, postfix and the init
+    fence start. A layer no longer ships any private key (keel-core#8), so
+    the machine makes its own on every boot where one is missing.
+  * keel-host-keys: replace a key in use whose public half is one that was
+    published inside a Keel layer or template, listed in
+    /usr/lib/inithooks/shared-host-keys. A machine made from an image
+    published before this fix, whose first boot hooks did not run, stops
+    serving a key anyone can download. The replacement is logged at warning
+    level to the auth facility, and a key that cannot be made fails the unit.
+  * 15regen-sslcert: restart Webmin with the web servers. It reads
+    /etc/ssl/private/cert.pem and kept serving the previous key until the
+    next reboot.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Tue, 29 Sep 2026 04:08:58 +0000
+
 inithooks (2.3.6+keel5) trixie; urgency=high
 
   * declarative.py: log a deprecated field name at level "warn". It passed
