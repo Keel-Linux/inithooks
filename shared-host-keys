@@ -1,0 +1,28 @@
+# Public halves of private keys that were published inside a Keel layer or
+# template, and so are known to anyone who downloaded one (keel-core#8).
+# keel-host-keys replaces a key the machine is using when it is on this list.
+#
+#   ssh <SHA256 fingerprint of the .pub>       ssh-keygen -lf KEY.pub -E sha256
+#   tls <sha256 of the DER public key>          openssl pkey -in KEY -pubout -outform DER | sha256sum
+#
+# Measured on 2026-09-29 from every layer on mirror.keellinux.org/layers and
+# every template on mirror.keellinux.org/images, and from the layer trees on
+# the build host. A key is only ever added here, never removed: a machine
+# made from an old image can come back at any time.
+
+# openssh-server host keys, the same in every layer and template built from
+# core 19.0-1
+ssh SHA256:1cgki2rI70hNbYpZT20zCdP4qdVZcECgk0HAM56U22c rsa
+ssh SHA256:mdYOFb7kCU9PRUSXx3zeFvlk9djAiABfCkModagsnLs ecdsa
+ssh SHA256:co8r09MoEC8FVPxSBL5ltte5n7uA3dvi8FeWS05+mUQ ed25519
+
+# turnkey-ssl's /usr/share/turnkey-ssl/cert.key, the same in every copy of
+# the package and so in every image, TurnKey's included
+tls 48aa0990f3d7802fea4fe67c3b0f542ecec5ceff966932f6fd5dca4ec180348f cert.key
+
+# ssl-cert snakeoil keys: lapp 19.0-1, postgresql 19.0-1 and 19.0-2, and the
+# postgresql layer tree on the build host (built, not published)
+tls c2372b3c0e48a020f083ad42a2cf59769e6197a51d628d95b00b6818a6f0175b lapp
+tls 195e51e6ff5745b725d2a52fceca33b1caff6ef4d6165607420ebbc19e72d81f postgresql 19.0-1
+tls 382e5c123d774da39d18ac6b6b261bcc8adee59cd17a3fb918a0ec3e0730751c postgresql 19.0-2
+tls c78269e204b2488e01c8196b72fbecb2bd6dae3df55d587a349bbda208bfc351 postgresql build host

@@ -1,0 +1,133 @@
+#!/bin/bash
+# keel-host-keys: give this machine its own host keys before any service
+# reads them (keel-core#8).
+#
+# A layer holds the same bytes on every machine built from it, so no private
+# key ships in one: the build removes them. This runs on every boot, from
+# keel-host-keys.service, ordered before sshd, Webmin, the web servers,
+# PostgreSQL and the init fence, and it
+#   - generates any SSH host key, TLS pair or snakeoil pair that is missing;
+#   - replaces one whose public half is on the list of keys that were
+#     published inside a layer or a template (shared-host-keys), which is how
+#     a machine made from an older image, whose first boot hook did not run,
+#     stops serving a key anyone can download.
+# A key of the machine's own is never touched. The first boot hooks
+# 10regen-sshkeys and 15regen-sslcert still run and replace these keys once
+# the hostname is settled.
+#
+# Exits non-zero when a key could not be generated or is still shared
+# afterwards, so the unit fails and `systemctl --failed` says so.
+set -u
+
+# every key this writes, or a generator it calls writes, is private from the
+# first byte, whatever each program does with its own mode
+umask 077
+
+SSH_DIR=${SSH_DIR:-/etc/ssh}
+SSH_KEY_TYPES=${SSH_KEY_TYPES:-rsa ecdsa ed25519}
+TLS_KEY=${TLS_KEY:-/etc/ssl/private/cert.key}
+TLS_PEM=${TLS_PEM:-/etc/ssl/private/cert.pem}
+SNAKEOIL_KEY=${SNAKEOIL_KEY:-/etc/ssl/private/ssl-cert-snakeoil.key}
+SNAKEOIL_CERT=${SNAKEOIL_CERT:-/etc/ssl/certs/ssl-cert-snakeoil.pem}
+SHARED_HOST_KEYS=${SHARED_HOST_KEYS:-/usr/lib/inithooks/shared-host-keys}
+
+failed=0
+
+log() {
+    local level=$1
+    shift
+    logger -t keel-host-keys -p "auth.$level" -- "$*"
+    echo "keel-host-keys: $*" >&2
+}
+
+fail() {
+    log err "$*"
+    failed=1
+}
+
+# is_shared KIND DIGEST: whether the list names this public key
+is_shared() {
+    [[ -f "$SHARED_HOST_KEYS" ]] || return 1
+    awk -v k="$1" -v d="$2" '$1 == k && $2 == d { found = 1 } END { exit !found }' \
+        "$SHARED_HOST_KEYS"
+}
+
+# tls_digest FILE: sha256 of the DER public half of the first private key in
+# FILE, which is also how a combined cert.pem is read
+tls_digest() {
+    openssl pkey -in "$1" -pubout -outform DER 2>/dev/null | sha256sum | cut -d ' ' -f 1
+}
+
+tls_shared() {
+    local file=$1
+    [[ -f "$file" ]] && is_shared tls "$(tls_digest "$file")"
+}
+
+ssh_key() {
+    local type=$1
+    local key=$SSH_DIR/ssh_host_${type}_key
+    local fp
+    if [[ -f "$key" && -f "$key.pub" ]]; then
+        fp=$(ssh-keygen -lf "$key.pub" -E sha256 2>/dev/null | cut -d ' ' -f 2)
+        is_shared ssh "$fp" || return 0
+        log warning "replacing $key: it is a shared key, published in a Keel image ($fp)"
+    fi
+    rm -f "$key" "$key.pub"
+    if ! ssh-keygen -q -t "$type" -N '' -C "root@$(hostname)" -f "$key" </dev/null >/dev/null; then
+        fail "could not generate $key"
+        return
+    fi
+    log notice "generated SSH host key $key ($(ssh-keygen -lf "$key.pub" -E sha256 | cut -d ' ' -f 2))"
+}
+
+tls_pair() {
+    local file need=0
+    for file in "$TLS_KEY" "$TLS_PEM"; do
+        if [[ ! -f "$file" ]]; then
+            need=1
+        elif tls_shared "$file"; then
+            log warning "replacing $file: it holds a shared key, published in a Keel image"
+            need=1
+        fi
+    done
+    [[ $need -eq 1 ]] || return 0
+    if ! command -v turnkey-make-ssl-cert >/dev/null; then
+        fail "turnkey-make-ssl-cert is not installed, cannot generate $TLS_KEY"
+        return
+    fi
+    rm -f "$TLS_KEY" "$TLS_PEM"
+    turnkey-make-ssl-cert --default --force >/dev/null || fail "turnkey-make-ssl-cert failed"
+    for file in "$TLS_KEY" "$TLS_PEM"; do
+        if [[ ! -f "$file" ]] || tls_shared "$file"; then
+            fail "$file is missing or still shared after turnkey-make-ssl-cert"
+        fi
+    done
+    [[ $failed -eq 1 ]] || log notice "generated the TLS key $TLS_KEY"
+}
+
+snakeoil_pair() {
+    command -v make-ssl-cert >/dev/null || return 0
+    if [[ -f "$SNAKEOIL_KEY" && -f "$SNAKEOIL_CERT" ]]; then
+        tls_shared "$SNAKEOIL_KEY" || return 0
+        log warning "replacing $SNAKEOIL_KEY: it is a shared key, published in a Keel image"
+    fi
+    make-ssl-cert generate-default-snakeoil --force-overwrite >/dev/null \
+        || { fail "make-ssl-cert could not generate $SNAKEOIL_KEY"; return; }
+    if [[ ! -f "$SNAKEOIL_KEY" ]] || tls_shared "$SNAKEOIL_KEY"; then
+        fail "$SNAKEOIL_KEY is missing or still shared after make-ssl-cert"
+        return
+    fi
+    log notice "generated the snakeoil key $SNAKEOIL_KEY"
+}
+
+for type in $SSH_KEY_TYPES; do
+    ssh_key "$type"
+done
+tls_pair
+snakeoil_pair
+
+# without the list, what was missing is generated but a shared key already
+# in place cannot be recognised, which must not look like success
+[[ -f "$SHARED_HOST_KEYS" ]] || fail "no list of shared keys at $SHARED_HOST_KEYS"
+
+exit $failed
