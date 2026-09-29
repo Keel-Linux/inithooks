@@ -1,0 +1,196 @@
+#!/bin/bash
+# Runs a test body against the real netfilter, in a network namespace of
+# its own.
+#
+#   tests/netns-sandbox [NO_NAT [NO_FILTER]] < BODY
+#
+# Re-executes itself in a new network and mount namespace: an unprivileged
+# user namespace where the kernel lets one mount (Debian), otherwise
+# 'sudo -n unshare' where sudo needs no password (the Ubuntu CI runner,
+# whose AppArmor policy leaves an unprivileged user namespace without the
+# right to mount). Either way iptables and ip6tables are the real ones,
+# acting on a network namespace nobody else uses. A second namespace plays
+# a client on the other end of a veth pair, over IPv6 (fd00:fe::/64) and
+# IPv4 (10.254.0.0/30), so traffic reaches the appliance on an interface
+# that is not loopback, the way it does in production.
+#
+# A listener answers "app" on the ports the fence stands in front of (80,
+# 443, 12321, 12322) and "fence" on the fence's own (60080, 60443). BODY is
+# bash, sourced with lib/init-fence.sh and these loaded:
+#
+#   probe FAMILY PORT     from the client: prints app, fence, refused or
+#                         silent (FAMILY is 6 or 4)
+#   probe_local FAMILY PORT
+#                         the same from the appliance itself, over loopback
+#   FIXTURES              tests/fixtures
+#
+# NO_NAT (iptables, ip6tables, both, or none) names a family whose nat
+# table is made unavailable, the way it is in a container whose host has not
+# loaded (ip6)table_nat: that command answers the nat table with an error,
+# and everything else goes to the real binary. NO_FILTER does the same for
+# inserting a rule into the filter INPUT chain, which is how the fence fails
+# when it can neither redirect a port nor refuse it. Those two answers are
+# the only ones stood in for; what the rules do to traffic is always real.
+#
+# Exits 77 when no namespace can be made here, so that a caller can tell
+# "cannot ask" from any answer.
+
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO=$(cd "$here/.." && pwd)
+
+if [[ -z "${NETNS_SANDBOX_INSIDE:-}" ]]; then
+    probe_ns='mount -t tmpfs none /mnt && ip link set lo up'
+    if unshare --user --map-root-user --net --mount -- \
+            /bin/sh -c "PATH=/usr/sbin:/sbin:\$PATH; $probe_ns" 2>/dev/null; then
+        exec env NETNS_SANDBOX_INSIDE=1 \
+            unshare --user --map-root-user --net --mount -- "$0" "$@"
+    elif sudo -n unshare --net --mount -- \
+            /bin/sh -c "PATH=/usr/sbin:/sbin:\$PATH; $probe_ns" 2>/dev/null; then
+        exec sudo -n env NETNS_SANDBOX_INSIDE=1 \
+            unshare --net --mount -- "$0" "$@"
+    fi
+    echo "netns-sandbox: no network and mount namespace available here" >&2
+    exit 77
+fi
+
+no_nat=${1:-none}
+no_filter=${2:-none}
+PATH=/usr/sbin:/sbin:$PATH
+scratch=$(mktemp -d)
+pids=()
+cleanup() {
+    local pid
+    for pid in "${pids[@]}"; do
+        kill "$pid" 2>/dev/null || true
+    done
+    rm -rf "$scratch"
+}
+trap cleanup EXIT
+
+# xtables takes its lock under /run, which an ordinary user cannot write.
+mount -t tmpfs tmpfs /run
+
+# stand_in IPT FAIL_NAT FAIL_FILTER
+# Puts a wrapper for IPT first on PATH that fails the nat table and/or the
+# filter insertion as a container that lacks them does, and passes every
+# other call to the real binary.
+stand_in() {
+    local ipt=$1
+    mkdir -p "$scratch/bin"
+    {
+        echo '#!/bin/bash'
+        if [[ "$2" == yes ]]; then
+            echo 'if [[ " $* " == *" -t nat "* ]]; then'
+            echo "    echo \"$ipt: can't initialize $ipt table 'nat': Table does not exist\" >&2"
+            echo '    exit 3'
+            echo 'fi'
+        fi
+        if [[ "$3" == yes ]]; then
+            echo 'if [[ " $* " == *" -I INPUT "* ]]; then'
+            echo "    echo \"$ipt: can't initialize $ipt table 'filter': Permission denied\" >&2"
+            echo '    exit 4'
+            echo 'fi'
+        fi
+        echo "exec /usr/sbin/$ipt \"\$@\""
+    } > "$scratch/bin/$ipt"
+    chmod +x "$scratch/bin/$ipt"
+}
+
+for ipt in iptables ip6tables; do
+    fail_nat=no
+    fail_filter=no
+    [[ "$no_nat" == both || "$no_nat" == "$ipt" ]] && fail_nat=yes
+    [[ "$no_filter" == both || "$no_filter" == "$ipt" ]] && fail_filter=yes
+    if [[ "$fail_nat$fail_filter" != nono ]]; then
+        stand_in "$ipt" "$fail_nat" "$fail_filter"
+    fi
+done
+PATH=$scratch/bin:$PATH
+
+ip link set lo up
+unshare --net sleep infinity &
+client=$!
+pids+=("$client")
+client_net=/proc/$client/ns/net
+# the client namespace exists once sleep runs in it
+for _ in $(seq 50); do
+    [[ "$(readlink "$client_net")" != "$(readlink /proc/self/ns/net)" ]] && break
+    sleep 0.02
+done
+ip link add fence0 type veth peer name client0 netns "$client"
+ip addr add fd00:fe::1/64 dev fence0 nodad
+ip addr add 10.254.0.1/30 dev fence0
+ip link set fence0 up
+nsenter --net="$client_net" ip link set lo up
+nsenter --net="$client_net" ip addr add fd00:fe::2/64 dev client0 nodad
+nsenter --net="$client_net" ip addr add 10.254.0.2/30 dev client0
+nsenter --net="$client_net" ip link set client0 up
+
+python3 - "$scratch/listening" <<'EOF' &
+import selectors, socket, sys
+banners = {80: b"app", 443: b"app", 12321: b"app", 12322: b"app",
+           60080: b"fence", 60443: b"fence"}
+sel = selectors.DefaultSelector()
+for port, banner in banners.items():
+    s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("::", port))
+    s.listen(16)
+    sel.register(s, selectors.EVENT_READ, banner)
+open(sys.argv[1], "w").close()
+while True:
+    for key, _ in sel.select():
+        conn, _ = key.fileobj.accept()
+        conn.sendall(key.data)
+        conn.close()
+EOF
+pids+=("$!")
+for _ in $(seq 100); do
+    [[ -e "$scratch/listening" ]] && break
+    sleep 0.02
+done
+
+_connect='
+import socket, sys
+family = socket.AF_INET6 if sys.argv[1] == "6" else socket.AF_INET
+s = socket.socket(family, socket.SOCK_STREAM)
+s.settimeout(1)
+try:
+    s.connect((sys.argv[2], int(sys.argv[3])))
+    print(s.recv(16).decode() or "closed")
+except ConnectionRefusedError:
+    print("refused")
+except (socket.timeout, TimeoutError):
+    print("silent")
+'
+
+probe() {
+    local family=$1
+    local port=$2
+    local addr=fd00:fe::1
+    [[ "$family" == 6 ]] || addr=10.254.0.1
+    nsenter --net="$client_net" python3 -c "$_connect" "$family" "$addr" "$port"
+}
+
+probe_local() {
+    local family=$1
+    local port=$2
+    local addr=::1
+    [[ "$family" == 6 ]] || addr=127.0.0.1
+    python3 -c "$_connect" "$family" "$addr" "$port"
+}
+
+# shellcheck disable=SC2034  # read by BODY
+FIXTURES=$here/fixtures
+HTTP_PORTS=(80)
+HTTPS_PORTS=(443 12321 12322)
+HTTP_FENCE_PORT=60080
+HTTPS_FENCE_PORT=60443
+# shellcheck source=lib/init-fence.sh
+source "$REPO/lib/init-fence.sh"
+
+# shellcheck source=/dev/null
+source /dev/stdin

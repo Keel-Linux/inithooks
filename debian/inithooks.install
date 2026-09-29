@@ -11,3 +11,4 @@ turnkey-init-fence/htdocs               /usr/lib/inithooks/turnkey-init-fence
 turnkey-init                            /usr/sbin
 turnkey-sudoadmin                       /usr/sbin
 turnkey-install-security-updates        /usr/sbin
+shared-host-keys                        /usr/lib/inithooks
