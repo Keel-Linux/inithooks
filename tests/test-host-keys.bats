@@ -254,3 +254,23 @@ cp '$BATS_TEST_TMPDIR/shared.key' '$TLS_PEM'"
     [ "$status" -ne 0 ]
     [[ "$(calls logger)" == *err*"ssl-cert-snakeoil.key"*"missing or still shared"* ]]
 }
+
+@test "fails, not skips, when the key directory cannot be written" {
+    chmod 555 "$SSH_DIR"
+    tls_pair
+    run "$SCRIPT"
+    chmod 755 "$SSH_DIR"
+    [ "$status" -ne 0 ]
+    [[ "$(calls logger)" == *err*"ssh_host_"* ]]
+}
+
+@test "a generator writes its files with no access for group or others" {
+    all_ssh_keys
+    stub turnkey-make-ssl-cert "touch '$TLS_KEY' '$TLS_PEM'
+openssl genpkey -algorithm ed25519 2>/dev/null > '$TLS_KEY'
+cat '$TLS_KEY' > '$TLS_PEM'"
+    run env -u UMASK bash -c "umask 022; '$SCRIPT'"
+    [ "$status" -eq 0 ]
+    [ "$(stat -c %a "$TLS_KEY")" = 600 ]
+    [ "$(stat -c %a "$TLS_PEM")" = 600 ]
+}

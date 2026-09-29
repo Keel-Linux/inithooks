@@ -10,7 +10,9 @@ inithooks (2.3.6+keel6) trixie; urgency=high
     /usr/lib/inithooks/shared-host-keys. A machine made from an image
     published before this fix, whose first boot hooks did not run, stops
     serving a key anyone can download. The replacement is logged at warning
-    level to the auth facility, and a key that cannot be made fails the unit.
+    level to the auth facility, and a key that cannot be made fails the unit;
+    the unit has no Condition, so a read-only /etc fails instead of being
+    skipped. Everything it writes is created under umask 077.
   * 15regen-sslcert: restart Webmin with the web servers. It reads
     /etc/ssl/private/cert.pem and kept serving the previous key until the
     next reboot.

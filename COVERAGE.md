@@ -6,8 +6,8 @@ file our changes touch).
 
 ## bin/keel-host-keys (2026-09-29, keel-core#8)
 
-`tests/test-host-keys.bats`, 20 tests, measures `bin/keel-host-keys` at
-64/64 lines; shell total 99.65 under `tests/coverage.sh`. SSH keys are made
+`tests/test-host-keys.bats`, 22 tests, measures `bin/keel-host-keys` at
+65/65 lines; shell total 99.65 under `tests/coverage.sh`. SSH keys are made
 by the real ssh-keygen; the TLS and snakeoil generators are stubs that write
 a real openssl key where the script reads it. Mutating the shared-key lookup,
 the post-generation check or the missing-list check each turns the suite
