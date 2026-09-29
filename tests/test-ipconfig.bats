@@ -5,6 +5,8 @@
 # scratch /etc/default/inithooks, preseed and interfaces file with ip, ifup,
 # turnkey-version and head replaced by stubs.
 
+bats_require_minimum_version 1.5.0
+
 load helpers
 
 REPO=$BATS_TEST_DIRNAME/..
@@ -56,9 +58,9 @@ preseed() {
 }
 
 @test "valid_config rejects anything else" {
-    ! ipconfig_valid_config bogus
-    ! ipconfig_valid_config ''
-    ! ipconfig_valid_config 'static dhcp'
+    run ! ipconfig_valid_config bogus
+    run ! ipconfig_valid_config ''
+    run ! ipconfig_valid_config 'static dhcp'
 }
 
 @test "iface is br0 on lxc and eth0 elsewhere" {
@@ -69,8 +71,8 @@ preseed() {
 
 @test "unchanged succeeds only when the stanza is already there" {
     ipconfig_unchanged "$INTERFACES" eth0 dhcp
-    ! ipconfig_unchanged "$INTERFACES" eth0 static
-    ! ipconfig_unchanged "$INTERFACES" br0 dhcp
+    run ! ipconfig_unchanged "$INTERFACES" eth0 static
+    run ! ipconfig_unchanged "$INTERFACES" br0 dhcp
 }
 
 @test "unchanged fails silently when the file is missing" {
@@ -271,7 +273,7 @@ iface eth0 inet6 dhcp
     [ "$(calls ip)" = 'link set eth0 down' ]
     [ -z "$(calls ifup)" ]
     [ "$(tail -1 "$INTERFACES")" = '    hostname tkldev' ]
-    ! grep -q inet6 "$INTERFACES"
+    run ! grep -q inet6 "$INTERFACES"
 }
 
 @test "hook static without a netmask is fatal" {
@@ -289,7 +291,7 @@ iface eth0 inet6 dhcp
     [ "$status" -eq 0 ]
     grep -q '^iface br0 inet manual$' "$INTERFACES"
     grep -q '^iface br0 inet6 dhcp$' "$INTERFACES"
-    ! grep -q eth0 "$INTERFACES"
+    run ! grep -q eth0 "$INTERFACES"
     [ "$(calls ip)" = 'link set br0 down' ]
 }
 
@@ -304,9 +306,9 @@ iface eth0 inet6 dhcp
 
 @test "unchanged also checks the inet6 stanza when a config is given" {
     ipconfig_unchanged "$INTERFACES" eth0 dhcp dhcp
-    ! ipconfig_unchanged "$INTERFACES" eth0 dhcp static
+    run ! ipconfig_unchanged "$INTERFACES" eth0 dhcp static
     sed -i 's/inet dhcp/inet manual/' "$INTERFACES"
-    ! ipconfig_unchanged "$INTERFACES" eth0 dhcp dhcp
+    run ! ipconfig_unchanged "$INTERFACES" eth0 dhcp dhcp
 }
 
 @test "ip6_syntax accepts full, compressed and edge addresses" {
@@ -321,19 +323,19 @@ iface eth0 inet6 dhcp
 }
 
 @test "ip6_syntax rejects what is not an IPv6 address" {
-    ! ipconfig_ip6_syntax ''
-    ! ipconfig_ip6_syntax 2001
-    ! ipconfig_ip6_syntax 192.0.2.10
-    ! ipconfig_ip6_syntax 2001:db8:1::10/64
-    ! ipconfig_ip6_syntax 2001:db8:1:::10
-    ! ipconfig_ip6_syntax 2001::db8::10
-    ! ipconfig_ip6_syntax :2001:db8:1:2:3:4:5:6
-    ! ipconfig_ip6_syntax 2001:db8:1:2:3:4:5:6:
-    ! ipconfig_ip6_syntax 12345::1
-    ! ipconfig_ip6_syntax 2001:db8:g::1
-    ! ipconfig_ip6_syntax 1:2:3:4:5:6:7
-    ! ipconfig_ip6_syntax 1:2:3:4:5:6:7:8:9
-    ! ipconfig_ip6_syntax 1:2:3:4:5:6:7::8
+    run ! ipconfig_ip6_syntax ''
+    run ! ipconfig_ip6_syntax 2001
+    run ! ipconfig_ip6_syntax 192.0.2.10
+    run ! ipconfig_ip6_syntax 2001:db8:1::10/64
+    run ! ipconfig_ip6_syntax 2001:db8:1:::10
+    run ! ipconfig_ip6_syntax 2001::db8::10
+    run ! ipconfig_ip6_syntax :2001:db8:1:2:3:4:5:6
+    run ! ipconfig_ip6_syntax 2001:db8:1:2:3:4:5:6:
+    run ! ipconfig_ip6_syntax 12345::1
+    run ! ipconfig_ip6_syntax 2001:db8:g::1
+    run ! ipconfig_ip6_syntax 1:2:3:4:5:6:7
+    run ! ipconfig_ip6_syntax 1:2:3:4:5:6:7:8:9
+    run ! ipconfig_ip6_syntax 1:2:3:4:5:6:7::8
 }
 
 @test "ip6_first_group pads and lowercases the first group" {
@@ -512,7 +514,7 @@ iface eth0 inet6 dhcp
     run "$HOOK"
     [ "$status" -eq 0 ]
     grep -q '^iface eth0 inet6 dhcp$' "$INTERFACES"
-    ! grep -q 'address' "$INTERFACES"
+    run ! grep -q 'address' "$INTERFACES"
 }
 
 @test "hook IP6_CONFIG=dhcp writes what an unset key writes" {
