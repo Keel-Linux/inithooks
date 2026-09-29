@@ -25,9 +25,71 @@ fence_nat_available() {
     "$1" -t nat -n -L PREROUTING >/dev/null 2>&1
 }
 
+# fence_refusal DPORT
+# The rule fence_close_port inserts and fence_open_port deletes, after the
+# chain name. Traffic that arrives on loopback is left alone, because a
+# REDIRECT in PREROUTING never applied to locally originated traffic, and a
+# refused port must behave like a redirected one for anything on the
+# appliance itself. tcp-reset, not the default ICMP error: measured in a
+# network namespace, an IPv6 client that gets icmp6-port-unreachable for
+# its SYN keeps retrying until it times out, so the port looked silent
+# rather than refused.
+fence_refusal() {
+    echo "! -i lo -p tcp -m tcp --dport $1 -j REJECT --reject-with tcp-reset"
+}
+
+# fence_close_port IPT DPORT
+# Refuses DPORT on IPT's filter INPUT chain, inserted first so that it comes
+# before whatever the appliance firewall accepts. This is what the fence
+# does for a port it cannot redirect: the fence page is not reachable on
+# that port over that family, and neither is the application standing behind
+# it.
+#
+# First in the chain as it stands when the fence starts. A restore of a
+# saved firewall (iptables-restore of /etc/iptables/rules.v4 or rules.v6,
+# which is what Webmin's Firewall module applies) flushes the tables it
+# names, and takes this rule with it, as it takes the REDIRECT rules in the
+# nat table. The unit is ordered after the services that restore one at
+# boot; a restore while the fence is up unfences every port, and nothing
+# here can prevent it.
+#
+# Fails, with a message, when the port can be neither redirected nor
+# refused, because then nothing is fencing it and the caller must not report
+# that anything is. What follows a failure is not a closed port: the start
+# fails, the unit's stop-post removes every rule the fence installed, and
+# the application answers on every port again, with a failed unit to say so.
+fence_close_port() {
+    local ipt=$1
+    local dport=$2
+    local -a rule
+    read -r -a rule <<< "$(fence_refusal "$dport")"
+    fence_open_port "$ipt" "$dport"
+    if ! "$ipt" -t filter -I INPUT 1 "${rule[@]}"; then
+        echo "<3>$ipt cannot refuse $dport either, nothing is fencing it" >&2
+        return 1
+    fi
+    echo "Refusing port $dport on $ipt for as long as the fence is up"
+}
+
+# fence_open_port IPT DPORT
+# Removes every refusal fence_close_port left behind for DPORT. Stopping has
+# to succeed, so this never fails: a family that cannot be asked at all ends
+# the loop exactly as a family with nothing left to remove does, and the
+# caller cannot tell the two apart.
+fence_open_port() {
+    local ipt=$1
+    local dport=$2
+    local -a rule
+    read -r -a rule <<< "$(fence_refusal "$dport")"
+    while "$ipt" -t filter -D INPUT "${rule[@]}" 2>/dev/null; do
+        :
+    done
+}
+
 iptables_delete_redirect() {
     local dport=$1
     local to_port=$2
+    local ipt
     echo "Removing REDIRECT firewall rule: $dport => $to_port"
     while iptables -t nat -D PREROUTING -p tcp --dport "$dport" \
             -j REDIRECT --to-port "$to_port" 2>/dev/null; do
@@ -36,6 +98,9 @@ iptables_delete_redirect() {
     while ip6tables -t nat -D PREROUTING -p tcp --dport "$dport" \
             -j REDIRECT --to-port "$to_port" 2>/dev/null; do
         :
+    done
+    for ipt in iptables ip6tables; do
+        fence_open_port "$ipt" "$dport"
     done
 }
 
@@ -46,10 +111,13 @@ iptables_add_redirect() {
     echo "Adding REDIRECT firewall rule: $dport => $to_port"
     iptables_delete_redirect "$dport" "$to_port"
     for ipt in iptables ip6tables; do
-        # skip a family whose nat table can't be used rather than failing,
-        # the fence is still reachable on $to_port
+        # a family whose nat table can't be used gets the port refused
+        # instead of redirected. Skipping it was worse than doing nothing:
+        # the caller went on to report a fence that was not there, over the
+        # family an LXC container is most likely to be reachable on.
         if ! fence_nat_available "$ipt"; then
-            echo "WARNING: $ipt nat table unavailable, skipping REDIRECT rule: $dport => $to_port" >&2
+            echo "<4>$ipt nat table unavailable, refusing $dport rather than redirecting it to $to_port" >&2
+            fence_close_port "$ipt" "$dport" || return 1
             continue
         fi
         $ipt -t nat -A PREROUTING -p tcp --dport "$dport" -j REDIRECT --to-port "$to_port"

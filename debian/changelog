@@ -1,3 +1,32 @@
+inithooks (2.3.6+keel7) trixie; urgency=high
+
+  * lib/init-fence.sh: the fence no longer reports a fence it did not put up.
+    A family whose nat table cannot be used, which is the normal case in an
+    LXC container whose host has not loaded (ip6)table_nat, had its REDIRECT
+    rule skipped with a warning, and the service then started and reported
+    success with the application ports reachable over that family. The port
+    is now refused in the filter table instead, inserted ahead of the rules
+    the appliance firewall accepts, so what the fence promises holds by
+    another means: the fence page stays reachable on its own ports, as it
+    became in 2.3.6+keel1, and the application behind the fenced port does
+    not answer. The refusal is a TCP reset, because an IPv6 client given
+    the default ICMP error waits for its timeout instead of failing, and it
+    does not apply to loopback, which a REDIRECT never did either.
+  * lib/init-fence.sh: a port that can be neither redirected nor refused is
+    fatal, with a message, because then nothing is fencing it. Fatal means
+    the unit fails and its stop-post removes every rule the fence
+    installed, so the application answers on every port again; it does not
+    mean the port is left closed.
+  * lib/init-fence.sh: stopping removes the refusals with the redirects, so
+    a stopped or failed fence leaves no port closed behind it.
+  * turnkey-init-fence.service: ordered after netfilter-persistent and
+    Webmin's webmin-iptables and webmin-ip6tables, which restore a saved
+    firewall at boot. A restore flushes the tables it names and every fence
+    rule in them, redirects and refusals alike; ordering covers boot, and a
+    restore while the fence is up still unfences every port.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Tue, 29 Sep 2026 04:34:01 +0000
+
 inithooks (2.3.6+keel6) trixie; urgency=high
 
   * keel-host-keys.service: generate the SSH host keys, the TLS pair in

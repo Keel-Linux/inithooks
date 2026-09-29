@@ -24,3 +24,4 @@ tmp
 tags
 *.tar.bz2
 .coverage
+coverage/
