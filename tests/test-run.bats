@@ -6,6 +6,8 @@
 # job is to create the conf file gets the path before the file is there; that
 # is what an appliance first boot found missing.
 
+bats_require_minimum_version 1.5.0
+
 load helpers
 
 setup() {
@@ -106,7 +108,7 @@ EOF
     [ "$status" -eq 0 ]
     grep -q '^export ROOT_PASS=' "$CONF"
     grep -q '^export AUTO_RUN=TRUE' "$CONF"
-    ! grep -qi 'ambiguous redirect' "$ROOT/inithooks.log"
+    run ! grep -qi 'ambiguous redirect' "$ROOT/inithooks.log"
 }
 
 @test "a failing hook is logged and the run carries on" {
