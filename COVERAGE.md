@@ -40,6 +40,16 @@ restore of the appliance firewall's own rules removes the whole fence.
 125 bats in all; `lib/init-fence.sh` 83/84 (98.81), total 99.58, the same
 one line uncovered.
 
+## bin/keel-host-keys (2026-09-29, keel-core#8)
+
+`tests/test-host-keys.bats`, 22 tests, measures `bin/keel-host-keys` at
+65/65 lines; shell total 99.65 under `tests/coverage.sh`. SSH keys are made
+by the real ssh-keygen; the TLS and snakeoil generators are stubs that write
+a real openssl key where the script reads it. Mutating the shared-key lookup,
+the post-generation check or the missing-list check each turns the suite
+red. The same script run against the keys extracted from the published core
+layer replaced all three SSH host keys and the TLS key.
+
 ## Measured baseline on master: shell 98 percent, Python 99 percent (2026-09-26)
 
 Pull requests #1 to #4 merged on 2026-09-26 (merge commits 4e09d1e, a20a94a,
