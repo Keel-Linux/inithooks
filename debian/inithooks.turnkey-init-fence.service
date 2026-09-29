@@ -2,6 +2,8 @@
 Description=TurnKey Initialization web interface fence
 After=network.target network-online.target
 After=iptables.service firewalld.service ip6tables.service ipset.service nftables.service
+# a restore of a saved firewall flushes the fence rules: start after them
+After=netfilter-persistent.service webmin-iptables.service webmin-ip6tables.service
 Before=apache2.service nginx.service lighttpd.service tomcat10.service tomcat11.service
 
 [Service]

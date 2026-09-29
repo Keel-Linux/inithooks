@@ -4,6 +4,42 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/fence-no-silent-skip: shell 99.57 percent (2026-09-28)
+
+`lib/init-fence.sh` gains `fence_close_port` and `fence_open_port`, and
+`iptables_add_redirect` refuses a port it cannot redirect instead of leaving
+it open. `tests/test-init-fence.bats` grows from 27 to 31 tests (116 bats
+over the six files): the refusal for one family and for both, the insertion
+first in the INPUT chain so it precedes the appliance's own ACCEPT rules,
+the removal loop, the fatal path when a port can be neither redirected nor
+refused, and the same path through the script, which is the one that proves
+the library stops its caller rather than dying invisibly.
+
+Measured with kcov 43: `bin/turnkey-init-fence` 28/28, `lib/init-fence.sh`
+78/79 (98.73), `firstboot.d/01ipconfig` 29/29, `lib/ipconfig.sh` 72/72,
+`firstboot.d/29tagid` 19/19, `lib/tagid.sh` 8/8, total 99.57.
+
+The one uncovered line of `lib/init-fence.sh` is line 154, the first line of
+the multi-line `simplehttpd.py` invocation, which kcov attributes to a later
+line. It is the same line that was uncovered before this branch, and it is
+not part of this change. Every line this branch adds is covered.
+
+The shell gate stays at 98, the lowest file rounded down; 98.73 clears it
+and decision 0003's 95 percent bar for a file a change touches.
+
+After review (2026-09-29): the stubs say which commands the fence issues,
+not what they do to traffic, so `tests/test-init-fence-netfilter.bats`
+(8 tests) asks the real netfilter. `tests/netns-sandbox` runs the library
+against real iptables and ip6tables in a network namespace of its own, with
+a client namespace on the other end of a veth pair, and connects to the
+ports over IPv6, IPv4 and loopback; the only stand-in is the answer
+"there is no nat table" (or "the filter table refuses the insert") for one
+family. It found that the default ICMP refusal left an IPv6 client waiting
+for its timeout, that the refusal also refused loopback, and that a
+restore of the appliance firewall's own rules removes the whole fence.
+125 bats in all; `lib/init-fence.sh` 83/84 (98.81), total 99.58, the same
+one line uncovered.
+
 ## bin/keel-host-keys (2026-09-29, keel-core#8)
 
 `tests/test-host-keys.bats`, 22 tests, measures `bin/keel-host-keys` at
