@@ -27,6 +27,19 @@ not part of this change. Every line this branch adds is covered.
 The shell gate stays at 98, the lowest file rounded down; 98.73 clears it
 and decision 0003's 95 percent bar for a file a change touches.
 
+After review (2026-09-29): the stubs say which commands the fence issues,
+not what they do to traffic, so `tests/test-init-fence-netfilter.bats`
+(8 tests) asks the real netfilter. `tests/netns-sandbox` runs the library
+against real iptables and ip6tables in a network namespace of its own, with
+a client namespace on the other end of a veth pair, and connects to the
+ports over IPv6, IPv4 and loopback; the only stand-in is the answer
+"there is no nat table" (or "the filter table refuses the insert") for one
+family. It found that the default ICMP refusal left an IPv6 client waiting
+for its timeout, that the refusal also refused loopback, and that a
+restore of the appliance firewall's own rules removes the whole fence.
+125 bats in all; `lib/init-fence.sh` 83/84 (98.81), total 99.58, the same
+one line uncovered.
+
 ## Measured baseline on master: shell 98 percent, Python 99 percent (2026-09-26)
 
 Pull requests #1 to #4 merged on 2026-09-26 (merge commits 4e09d1e, a20a94a,
