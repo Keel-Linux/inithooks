@@ -126,7 +126,7 @@ teardown() {
     [ "${lines[3]}" = 'Refusing port 443 on ip6tables for as long as the fence is up' ]
     [ "$(count iptables ' -A PREROUTING ')" -eq 1 ]
     [ "$(count ip6tables ' -A PREROUTING ')" -eq 0 ]
-    [ "$(count ip6tables '-t filter -I INPUT 1 -p tcp -m tcp --dport 443 -j REJECT')" -eq 1 ]
+    [ "$(count ip6tables '-t filter -I INPUT 1 ! -i lo -p tcp -m tcp --dport 443 -j REJECT --reject-with tcp-reset')" -eq 1 ]
     [ "$(count iptables ' -I ')" -eq 0 ]
 }
 
@@ -137,8 +137,8 @@ teardown() {
     [ "$status" -eq 0 ]
     [ "$(count iptables ' -A PREROUTING ')" -eq 0 ]
     [ "$(count ip6tables ' -A PREROUTING ')" -eq 0 ]
-    [ "$(count iptables '-t filter -I INPUT 1 -p tcp -m tcp --dport 80 -j REJECT')" -eq 1 ]
-    [ "$(count ip6tables '-t filter -I INPUT 1 -p tcp -m tcp --dport 80 -j REJECT')" -eq 1 ]
+    [ "$(count iptables '-t filter -I INPUT 1 ! -i lo -p tcp -m tcp --dport 80 -j REJECT --reject-with tcp-reset')" -eq 1 ]
+    [ "$(count ip6tables '-t filter -I INPUT 1 ! -i lo -p tcp -m tcp --dport 80 -j REJECT --reject-with tcp-reset')" -eq 1 ]
     [ "$(printf '%s\n' "${lines[@]}" | grep -c '^<4>ip6\?tables nat table unavailable')" -eq 2 ]
 }
 
@@ -147,13 +147,15 @@ teardown() {
     run iptables_add_redirect 12321 60443
     [ "$status" -eq 1 ]
     [ "${lines[-1]}" = '<3>ip6tables cannot refuse 12321 either, nothing is fencing it' ]
+    # the journal never claims a refusal that was not installed
+    [ "$(printf '%s\n' "${lines[@]}" | grep -c '^Refusing port')" -eq 0 ]
 }
 
 @test "close_port inserts the refusal first, before the appliance's own rules" {
     run fence_close_port ip6tables 443
     [ "$status" -eq 0 ]
     [ "$output" = 'Refusing port 443 on ip6tables for as long as the fence is up' ]
-    [ "$(calls ip6tables | tail -1)" = '-t filter -I INPUT 1 -p tcp -m tcp --dport 443 -j REJECT' ]
+    [ "$(calls ip6tables | tail -1)" = '-t filter -I INPUT 1 ! -i lo -p tcp -m tcp --dport 443 -j REJECT --reject-with tcp-reset' ]
 }
 
 @test "open_port removes the refusal until it is gone" {
@@ -161,7 +163,7 @@ teardown() {
     run fence_open_port ip6tables 443
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    [ "$(count ip6tables '-t filter -D INPUT -p tcp -m tcp --dport 443 -j REJECT')" -eq 3 ]
+    [ "$(count ip6tables '-t filter -D INPUT ! -i lo -p tcp -m tcp --dport 443 -j REJECT --reject-with tcp-reset')" -eq 3 ]
 }
 
 @test "unensure_accept removes the ACCEPT rules until they are gone" {
@@ -201,7 +203,7 @@ teardown() {
     [ "$(count iptables ' -I ')" -eq 0 ]
     [ "$(count ip6tables ' -I ')" -eq 0 ]
     [ "$(count iptables ' -D PREROUTING ')" -eq 4 ]
-    [ "$(count iptables '-t filter -D INPUT -p tcp -m tcp --dport 443 -j REJECT')" -eq 1 ]
+    [ "$(count iptables '-t filter -D INPUT ! -i lo -p tcp -m tcp --dport 443 -j REJECT --reject-with tcp-reset')" -eq 1 ]
     [ "$(count ip6tables '-j REJECT')" -eq 4 ]
     [ "$(count iptables '-j ACCEPT')" -eq 2 ]
 }
@@ -379,4 +381,26 @@ teardown() {
     DEBUG=1 run "$FENCE" bogus
     [ "$status" -eq 1 ]
     printf '%s\n' "${lines[@]}" | grep -qx 'Unknown command: bogus'
+}
+
+# A restore of a saved firewall flushes the tables it names, and with them
+# every rule the fence installed (tests/test-init-fence-netfilter.bats has
+# it happen). At boot the only defence is order: start after whatever does
+# the restoring. Webmin's Firewall module restores /etc/iptables/rules.v4
+# and rules.v6 through webmin-iptables.service and webmin-ip6tables.service
+# when "activate at boot" is set; iptables-persistent restores the same
+# files through netfilter-persistent.service.
+@test "the unit starts after everything that restores a saved firewall at boot" {
+    local unit=$REPO/debian/inithooks.turnkey-init-fence.service
+    local after
+    after=" $(sed -n 's/^After=//p' "$unit" | tr '\n' ' ') "
+    local restorer
+    for restorer in iptables.service ip6tables.service nftables.service \
+            firewalld.service ipset.service netfilter-persistent.service \
+            webmin-iptables.service webmin-ip6tables.service; do
+        [[ "$after" == *" $restorer "* ]] || {
+            echo "not ordered after $restorer" >&2
+            return 1
+        }
+    done
 }
