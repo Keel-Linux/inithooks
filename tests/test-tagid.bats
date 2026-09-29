@@ -6,6 +6,8 @@
 # /etc/default/turnkey-init-fence and the fence htdocs, with systemctl
 # replaced by a stub.
 
+bats_require_minimum_version 1.5.0
+
 load helpers
 
 REPO=$BATS_TEST_DIRNAME/..
@@ -63,7 +65,7 @@ exit 0'
 
 @test "is_tagged looks for the ajax host" {
     echo '<html><body>fence</body></html>' > "$BATS_TEST_TMPDIR/index.html"
-    ! tagid_is_tagged "$BATS_TEST_TMPDIR/index.html"
+    run ! tagid_is_tagged "$BATS_TEST_TMPDIR/index.html"
     echo "$SCRIPTS" >> "$BATS_TEST_TMPDIR/index.html"
     tagid_is_tagged "$BATS_TEST_TMPDIR/index.html"
 }
@@ -88,7 +90,7 @@ exit 0'
     run "$HOOK"
     [ "$status" -eq 0 ]
     [ -f "$HTDOCS/index.html" ]
-    ! grep -q '@APP_NAME@' "$HTDOCS/index.html"
+    run ! grep -q '@APP_NAME@' "$HTDOCS/index.html"
     grep -q 'core' "$HTDOCS/index.html"
     [ "$(tail -2 "$HTDOCS/index.html")" = "$SCRIPTS" ]
     # the packaged copy is left as shipped
