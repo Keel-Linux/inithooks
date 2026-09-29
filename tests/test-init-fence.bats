@@ -5,6 +5,8 @@
 # under a scratch INITHOOKS_PATH; /etc/default/turnkey-init-fence, the
 # htdocs, the pid file and the log file are scratch paths.
 
+bats_require_minimum_version 1.5.0
+
 load helpers
 
 REPO=$BATS_TEST_DIRNAME/..
@@ -89,7 +91,7 @@ teardown() {
 @test "nat_available asks the family for its nat PREROUTING chain" {
     fence_nat_available iptables
     stub_tables ip6tables 3 0
-    ! fence_nat_available ip6tables
+    run ! fence_nat_available ip6tables
     [ "$(calls ip6tables)" = '-t nat -n -L PREROUTING' ]
 }
 
@@ -197,7 +199,7 @@ teardown() {
     [ "$output" = 'Stopping init-fence mini-server' ]
     [ ! -e "$PIDFILE" ]
     sleep 0.2
-    ! kill -0 "$pid" 2>/dev/null
+    run ! kill -0 "$pid" 2>/dev/null
     [ -z "$(calls pgrep)" ]
 }
 
@@ -211,7 +213,7 @@ teardown() {
     [ "${lines[3]}" = "Found simplehttpd.py (pid: $pid) - killing" ]
     [ "$(calls pgrep)" = '--oldest --full /usr/lib/inithooks/bin/simplehttpd.py.*lib/inithooks/turnkey-init-fence/htdocs' ]
     sleep 0.2
-    ! kill -0 "$pid" 2>/dev/null
+    run ! kill -0 "$pid" 2>/dev/null
 }
 
 @test "stop_mini_server reports when no server is found" {
@@ -231,7 +233,7 @@ teardown() {
     [ "$(count ip6tables ' -A PREROUTING ')" -eq 4 ]
     [ "$(count iptables ' -A INPUT ')" -eq 2 ]
     [ "$(count ip6tables ' -A INPUT ')" -eq 2 ]
-    ! printf '%s\n' "${lines[@]}" | grep -q WARNING
+    run ! grep -q WARNING <<<"$output"
     [[ "$(calls simplehttpd.py)" == *"$WRITABLE_HTDOCS 60080 60443 "* ]]
 }
 
@@ -287,7 +289,7 @@ teardown() {
     [ "$(count iptables ' -D INPUT ')" -eq 2 ]
     [ ! -e "$PIDFILE" ]
     sleep 0.2
-    ! kill -0 "$pid" 2>/dev/null
+    run ! kill -0 "$pid" 2>/dev/null
 }
 
 @test "stop-post removes the rules after a failed run" {
