@@ -9,10 +9,21 @@ inithooks (2.3.6+keel6) trixie; urgency=high
     the appliance firewall accepts, so what the fence promises holds by
     another means: the fence page stays reachable on its own ports, as it
     became in 2.3.6+keel1, and the application behind the fenced port does
-    not answer. A port that can be neither redirected nor refused is fatal,
-    with a message, because then nothing is fencing it.
+    not answer. The refusal is a TCP reset, because an IPv6 client given
+    the default ICMP error waits for its timeout instead of failing, and it
+    does not apply to loopback, which a REDIRECT never did either.
+  * lib/init-fence.sh: a port that can be neither redirected nor refused is
+    fatal, with a message, because then nothing is fencing it. Fatal means
+    the unit fails and its stop-post removes every rule the fence
+    installed, so the application answers on every port again; it does not
+    mean the port is left closed.
   * lib/init-fence.sh: stopping removes the refusals with the redirects, so
     a stopped or failed fence leaves no port closed behind it.
+  * turnkey-init-fence.service: ordered after netfilter-persistent and
+    Webmin's webmin-iptables and webmin-ip6tables, which restore a saved
+    firewall at boot. A restore flushes the tables it names and every fence
+    rule in them, redirects and refusals alike; ordering covers boot, and a
+    restore while the fence is up still unfences every port.
 
  -- Marcos Mendez <mendez.foto@gmail.com>  Mon, 28 Sep 2026 12:20:00 +0000
 
