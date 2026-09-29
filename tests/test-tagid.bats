@@ -1,13 +1,15 @@
 #!/usr/bin/env bats
-# Tests for lib/tagid.sh and firstboot.d/29tagid: the page the appliance
+# Tests for lib/tagid.sh and firstboot.d/29tagid: the pages the appliance
 # serves on first boot, before anybody has logged in.
 #
-# The verdict that matters is taken from the rendered page, not from the
-# source of the hook: the page is parsed for every host a <script>, <link>,
-# <img> or <iframe> would fetch from, and that set has to be empty
-# (docs/traps.md, "Asserting the configuration is not asserting the
-# behaviour"). A grep for one known hostname would pass the day somebody
-# adds a different one.
+# The verdict that matters is taken from what is served, not from the
+# source of the hook (docs/traps.md, "Asserting the configuration is not
+# asserting the behaviour"), and by two detectors that do not share a
+# parser: tests/remote_loads.py, which parses the page with Python's
+# HTMLParser and knows every attribute and style construct that fetches,
+# and remote_tokens below, which knows no HTML at all and reports any URL
+# with a host in any tag that is not a link, in any quoting or none. A grep
+# for one known hostname would pass the day somebody adds a different one.
 #
 # Refutations are written "run ! cmd", never a bare "! cmd": bash does not
 # apply errexit to a negated command, so a bare one asserts nothing.
@@ -20,7 +22,7 @@ REPO=$BATS_TEST_DIRNAME/..
 HOOK=$REPO/firstboot.d/29tagid
 TKL_VERSION=turnkey-core-19.0-trixie-amd64
 APT_LINE='Acquire::http::User-Agent "TurnKey APT-HTTP/1.3 (turnkey-core-19.0-trixie-amd64)";'
-# what an image built before this change put at the end of the page
+# what an image built before Keel-Linux/inithooks#13 put at the end of the page
 OLD_SCRIPTS='<script src="https://ajax.turnkeylinux.org/initfence/iso/19.0-trixie-amd64/core.js" async></script>
 <script src="https://ajax.turnkeylinux.org/initfence/iso/19.0-trixie-amd64/core.direct" async></script>'
 
@@ -33,10 +35,9 @@ exit 0'
 
     # a scratch /usr/lib/inithooks with the packaged htdocs and the library
     export INITHOOKS_PATH=$BATS_TEST_TMPDIR/inithooks
-    mkdir -p "$INITHOOKS_PATH/turnkey-init-fence/htdocs"
+    mkdir -p "$INITHOOKS_PATH/turnkey-init-fence"
     ln -s "$REPO/lib" "$INITHOOKS_PATH/lib"
-    cp "$REPO/turnkey-init-fence/htdocs/index.html" \
-        "$INITHOOKS_PATH/turnkey-init-fence/htdocs/index.html"
+    cp -R "$REPO/turnkey-init-fence/htdocs" "$INITHOOKS_PATH/turnkey-init-fence/"
 
     export HTDOCS=$BATS_TEST_TMPDIR/var/turnkey-init-fence/htdocs
     export INITFENCE_DEFAULT=$BATS_TEST_TMPDIR/default-turnkey-init-fence
@@ -49,68 +50,154 @@ exit 0'
 
     PACKAGED=$REPO/turnkey-init-fence/htdocs/index.html
     RENDERED=$HTDOCS/index.html
+    # the page the hook is expected to serve: the packaged one, named
+    EXPECTED=$BATS_TEST_TMPDIR/expected.html
+    sed 's|@APP_NAME@|core|' "$PACKAGED" > "$EXPECTED"
 }
 
-# Every host the page would fetch from while rendering: the src of a script,
-# frame or image and the href of a stylesheet, absolute or protocol relative.
-# An <a href> is not here on purpose: a link is somewhere the operator may
-# choose to go, not something the page loads on its own.
-loaded_hosts() {
-    grep -oiE '<(script|link|img|iframe)[^>]+(src|href)[[:space:]]*=[[:space:]]*"[^"]+"' "$1" \
-        | grep -oiE '"(https?:)?//[^/"]+' \
-        | sed 's|^"||' \
-        | sort -u
+# remote_loads FILE
+# What tests/remote_loads.py says FILE fetches from another host.
+remote_loads() {
+    python3 "$BATS_TEST_DIRNAME/remote_loads.py" "$1"
 }
 
-script_hosts() {
-    grep -oiE '<script[^>]+src[[:space:]]*=[[:space:]]*"[^"]+"' "$1" \
-        | grep -oiE '"(https?:)?//[^/"]+' \
-        | sed 's|^"||' \
-        | sort -u
+# remote_tokens FILE
+# Every URL with a host in a tag of FILE that is not a link (<a>, <area>),
+# and in its style elements, in any quoting or none: scheme://host,
+# //host, and the backslash forms a browser reads the same way. Knows no
+# HTML beyond where a tag starts and ends, so it is wider than any parser
+# and never quieter than one about a well formed page.
+remote_tokens() {
+    tr '\n' ' ' < "$1" \
+        | grep -oiE '<[a-z!/][^>]*>|<style[^>]*>.*</style>' \
+        | grep -viE '^<(a|area)[[:space:]/>]' \
+        | grep -oiE '([a-z][a-z0-9+.-]*:)?[/\\]{2}[^/\\[:space:]"'"'"')>]+' \
+        || true
 }
 
-# ------------------------------------------------- the page that is served
+# serves_nothing_remote DIR
+# Every file the fence would serve from DIR loads nothing from another host,
+# by both detectors.
+serves_nothing_remote() {
+    local file
+    for file in "$1"/*; do
+        if [[ -n "$(remote_tokens "$file")" ]]; then
+            echo "remote_tokens: $file: $(remote_tokens "$file")" >&2
+            return 1
+        fi
+        if [[ "$file" == *.html ]] && ! remote_loads "$file" >&2; then
+            echo "remote_loads: $file" >&2
+            return 1
+        fi
+    done
+}
 
-@test "the rendered page loads no script from another host" {
+# inherit PAGE_SUFFIX
+# An htdocs directory left in /var by an older image or by somebody else:
+# the packaged files, with PAGE_SUFFIX appended to the index.
+inherit() {
+    mkdir -p "$(dirname "$HTDOCS")"
+    cp -R "$INITHOOKS_PATH/turnkey-init-fence/htdocs" "$(dirname "$HTDOCS")"
+    printf '%s\n' "$1" >> "$RENDERED"
+}
+
+# ------------------------------------------------ the detectors themselves
+
+@test "both detectors see the scripts an older image appended" {
+    inherit "$OLD_SCRIPTS"
+    run remote_loads "$RENDERED"
+    [ "$status" -eq 1 ]
+    [ "${#lines[@]}" -eq 2 ]
+    run remote_tokens "$RENDERED"
+    [ "${#lines[@]}" -eq 2 ]
+}
+
+@test "remote_tokens sees what HTMLParser does not" {
+    inherit '<!--><img src=https://evil.example/a>-->'
+    run remote_loads "$RENDERED"
+    [ "$status" -eq 0 ]
+    run remote_tokens "$RENDERED"
+    [ "$output" = "https://evil.example" ]
+}
+
+@test "remote_tokens ignores links and page text" {
+    run remote_tokens "$EXPECTED"
+    [ -z "$output" ]
+    grep -q 'href="https://www.turnkeylinux.org' "$EXPECTED"
+}
+
+# ------------------------------------------------- the pages that are served
+
+@test "the packaged pages load nothing from another host" {
+    run serves_nothing_remote "$REPO/turnkey-init-fence/htdocs"
+    [ "$status" -eq 0 ]
+}
+
+@test "the served pages load nothing from another host" {
     run "$HOOK"
     [ "$status" -eq 0 ]
     [ -s "$RENDERED" ]
-    run script_hosts "$RENDERED"
+    run serves_nothing_remote "$HTDOCS"
     [ "$status" -eq 0 ]
-    [ -z "$output" ]
 }
 
-@test "the rendered page loads nothing at all from another host" {
+@test "the page served is the packaged page, named after the appliance" {
     "$HOOK"
-    run loaded_hosts "$RENDERED"
-    [ -z "$output" ]
+    diff "$EXPECTED" "$RENDERED"
+    run ! grep -q '@APP_NAME@' "$RENDERED"
 }
 
-@test "the packaged page loads nothing from another host either" {
-    run loaded_hosts "$PACKAGED"
-    [ -z "$output" ]
-}
-
-@test "the rendered page names no third party host in a script element" {
+@test "a page inherited from an older image is replaced, not edited" {
+    inherit "$OLD_SCRIPTS"
     "$HOOK"
-    run ! grep -qiE '<script[^>]+src[^>]*(ajax\.turnkeylinux\.org|googleapis\.com)' "$RENDERED"
+    diff "$EXPECTED" "$RENDERED"
 }
 
-@test "a page inherited from an older image loses the scripts it carried" {
-    # /var survives, so an index tagged by a previous build can still be there
-    mkdir -p "$HTDOCS"
-    { cat "$PACKAGED"; printf '%s\n' "$OLD_SCRIPTS"; } > "$RENDERED"
-    run script_hosts "$RENDERED"
-    [ -n "$output" ]
+# The review of the first version of this branch measured these getting
+# past a strip that removed double and single quoted <script src> only.
+# Each is served as an inherited page and must be gone after the hook.
+@test "every way an inherited page can load from another host is gone" {
+    local -a pages=(
+        '<script src=https://evil.example/x.js></script>'
+        '<script src="https://evil.example/x.js">var a=1;</script>'
+        '<link rel="stylesheet" href="https://evil.example/x.css">'
+        '<img src="https://evil.example/x.png">'
+        '<iframe src="https://evil.example/"></iframe>'
+        "<style>@import 'https://evil.example/x.css';</style>"
+        '<base href="https://evil.example/">'
+        '<meta http-equiv="refresh" content="0; url=https://evil.example/">'
+        '<!--><img src=https://evil.example/a>-->'
+        '<script></script x><img src=https://evil.example/a>'
+        '<img src="/\evil.example/x.png">'
+    )
+    local page
+    for page in "${pages[@]}"; do
+        rm -rf "$(dirname "$HTDOCS")"
+        inherit "$page"
+        [ -n "$(remote_tokens "$RENDERED")" ]
+        "$HOOK"
+        diff "$EXPECTED" "$RENDERED"
+        serves_nothing_remote "$HTDOCS"
+    done
+}
+
+@test "an inherited stylesheet and a file the package does not ship are replaced too" {
+    inherit ''
+    echo '@import url(https://evil.example/x.css);' >> "$HTDOCS/style.css"
+    echo 'alert(1)' > "$HTDOCS/extra.js"
     "$HOOK"
-    run script_hosts "$RENDERED"
-    [ -z "$output" ]
+    diff "$INITHOOKS_PATH/turnkey-init-fence/htdocs/style.css" "$HTDOCS/style.css"
+    [ ! -e "$HTDOCS/extra.js" ]
+    diff <(cd "$INITHOOKS_PATH/turnkey-init-fence/htdocs" && ls -A) \
+        <(cd "$HTDOCS" && ls -A)
 }
 
 @test "the page keeps its own local stylesheet and image" {
     "$HOOK"
     grep -q 'href="/style.css"' "$RENDERED"
     grep -q 'src="/turnkey-init-root.png"' "$RENDERED"
+    cmp "$INITHOOKS_PATH/turnkey-init-fence/htdocs/turnkey-init-root.png" \
+        "$HTDOCS/turnkey-init-root.png"
 }
 
 @test "the inline script that fills in the ssh address survives" {
@@ -121,25 +208,64 @@ script_hosts() {
     run ! grep -qE '<script[^>]+src[^>]*>[[:space:]]*$' "$RENDERED"
 }
 
-@test "running the hook twice leaves the same page" {
+@test "running the hook twice leaves the same pages" {
     "$HOOK"
-    cp "$RENDERED" "$BATS_TEST_TMPDIR/once"
+    cp -R "$HTDOCS" "$BATS_TEST_TMPDIR/once"
     "$HOOK"
-    diff "$BATS_TEST_TMPDIR/once" "$RENDERED"
+    diff -r "$BATS_TEST_TMPDIR/once" "$HTDOCS"
 }
 
-@test "a failing strip leaves the page it was rewriting intact" {
-    # the temporary file exists for this: the fence must never be left with a
-    # truncated index (docs/traps.md, "gpg truncates its output file before
-    # asking for the passphrase")
+@test "nothing is written inside the directory the fence serves, and nothing is left beside it" {
+    inherit "$OLD_SCRIPTS"
     "$HOOK"
-    cp "$RENDERED" "$BATS_TEST_TMPDIR/good"
-    stub perl 'exit 1'
+    diff <(cd "$INITHOOKS_PATH/turnkey-init-fence/htdocs" && ls -A) \
+        <(cd "$HTDOCS" && ls -A)
+    [ "$(ls -A "$(dirname "$HTDOCS")")" = htdocs ]
+}
+
+@test "a render that fails leaves no inherited page to serve" {
+    # the fence serves the packaged htdocs when the writable copy is missing
+    # (fence_htdocs), so on failure the inherited copy goes rather than stays
+    inherit "$OLD_SCRIPTS"
+    stub sed 'exit 4'
     run "$HOOK"
-    [ "$status" -eq 0 ]
-    [ -s "$RENDERED" ]
-    diff "$BATS_TEST_TMPDIR/good" "$RENDERED"
-    [ ! -e "$RENDERED.tmp" ]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"<3>"* ]]
+    [ ! -e "$HTDOCS" ]
+    [ -z "$(ls -A "$(dirname "$HTDOCS")")" ]
+}
+
+@test "every step that can fail leaves no inherited page and nothing half built" {
+    local tool
+    for tool in mkdir mktemp cp chmod mv; do
+        rm -rf "$(dirname "$HTDOCS")" "${STUBS:?}/$tool"
+        inherit "$OLD_SCRIPTS"
+        stub "$tool" 'exit 9'
+        run "$HOOK"
+        [ "$status" -eq 1 ] || { echo "$tool: status $status" >&2; return 1; }
+        [ ! -e "$HTDOCS" ] || { echo "$tool: htdocs left" >&2; return 1; }
+        [ -z "$(ls -A "$(dirname "$HTDOCS")")" ] \
+            || { echo "$tool: $(ls -A "$(dirname "$HTDOCS")")" >&2; return 1; }
+        rm "$STUBS/$tool"
+    done
+}
+
+@test "a missing mktemp never turns the build directory into the root" {
+    # an empty NEW would make the copy land in /; it must stop instead. cp is
+    # a stub that succeeds, as the real one would for root
+    stub mktemp 'exit 1'
+    stub cp 'exit 0'
+    run "$HOOK"
+    [ "$status" -eq 1 ]
+    [ -z "$(calls cp)" ]
+}
+
+@test "a default file without HTDOCS stops the hook before it removes anything" {
+    echo 'HTTP_PORTS=(80)' > "$INITFENCE_DEFAULT"
+    unset HTDOCS
+    run "$HOOK"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"HTDOCS is not set"* ]]
 }
 
 @test "the page still ends with a closing html tag" {
@@ -155,59 +281,12 @@ script_hosts() {
     [ "$(tagid_app_name turnkey-gitea-19.1-trixie-arm64)" = gitea ]
 }
 
-@test "strip_remote_scripts removes an absolute script element" {
-    run tagid_strip_remote_scripts <<< '<p>a</p>
-<script src="https://ajax.turnkeylinux.org/initfence/iso/19.0/core.js" async></script>
-<p>b</p>'
-    [ "$status" -eq 0 ]
-    [[ "$output" != *script* ]]
-    [[ "$output" == *"<p>a</p>"* ]]
-    [[ "$output" == *"<p>b</p>"* ]]
-}
-
-@test "strip_remote_scripts removes a protocol relative one" {
-    run tagid_strip_remote_scripts <<< '<script src="//cdn.example.net/x.js"></script>'
-    [ -z "${output// /}" ]
-}
-
-@test "strip_remote_scripts removes one that is not on a line of its own" {
-    run tagid_strip_remote_scripts <<< '<p>a</p><script src="https://h.example/x.js"></script><p>b</p>'
-    [[ "$output" != *script* ]]
-    [[ "$output" == *"<p>a</p>"* ]]
-    [[ "$output" == *"<p>b</p>"* ]]
-}
-
-@test "strip_remote_scripts keeps a script served by the appliance" {
-    local local_script='<script src="/local.js"></script>'
-    run tagid_strip_remote_scripts <<< "$local_script"
-    [ "$output" = "$local_script" ]
-}
-
-@test "strip_remote_scripts keeps an inline script" {
-    run tagid_strip_remote_scripts <<< '<script>
-let a = 1;
-</script>'
-    [[ "$output" == *"let a = 1;"* ]]
-    [[ "$output" == *"<script>"* ]]
-}
-
-@test "strip_remote_scripts keeps a link to somewhere the operator may click" {
-    local anchor='<a href="https://www.debian.org">Debian</a>'
-    run tagid_strip_remote_scripts <<< "$anchor"
-    [ "$output" = "$anchor" ]
-}
-
-@test "strip_remote_scripts passes an empty input through" {
-    run tagid_strip_remote_scripts < /dev/null
-    [ "$status" -eq 0 ]
-    [ -z "$output" ]
-}
-
-@test "the library no longer renders or detects a remote tag" {
+@test "the library no longer renders, detects or strips a remote tag" {
     run ! declare -F tagid_render_scripts
     run ! declare -F tagid_is_tagged
     run ! declare -F tagid_build
     run ! declare -F tagid_version
+    run ! declare -F tagid_strip_remote_scripts
 }
 
 @test "the library names no third party host" {
@@ -217,12 +296,13 @@ let a = 1;
 
 # ---------------------------------------------------------------- the hook
 
-@test "hook does nothing under turnkey-init" {
+@test "hook serves the packaged page under turnkey-init as well" {
+    # turnkey-init is what an operator runs when the first boot did not
+    # complete, with the fence still up and the old page still in /var
+    inherit "$OLD_SCRIPTS"
     _TURNKEY_INIT=1 run "$HOOK"
     [ "$status" -eq 0 ]
-    [ -z "$output" ]
-    [ ! -e "$HTDOCS" ]
-    [ -z "$(calls systemctl)" ]
+    diff "$EXPECTED" "$RENDERED"
 }
 
 @test "hook copies the packaged htdocs when the writable copy is missing" {
@@ -233,14 +313,6 @@ let a = 1;
     grep -q 'core' "$RENDERED"
     # the packaged copy is left as shipped
     grep -q '@APP_NAME@' "$INITHOOKS_PATH/turnkey-init-fence/htdocs/index.html"
-}
-
-@test "hook names the appliance in an existing writable index" {
-    mkdir -p "$HTDOCS"
-    echo '<title>@APP_NAME@</title>' > "$RENDERED"
-    run "$HOOK"
-    [ "$status" -eq 0 ]
-    [ "$(cat "$RENDERED")" = "<title>core</title>" ]
 }
 
 @test "hook does not read the apt user agent any more" {
