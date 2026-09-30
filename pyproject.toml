@@ -17,7 +17,6 @@ omit = [
     "libinithooks/__init__.py",
     "libinithooks/inithooks_cache.py",
     "libinithooks/inithooks_log.py",
-    "bin/hubservices.py",
     "bin/reboot-ask.py",
     "bin/secalerts.py",
     "bin/secupdates-ask.py",

@@ -576,10 +576,28 @@ Common to all appliances::
     15regen-sslcert         DH_BITS                 [ 1024 | 2048 | 4096 ]
     29preseed               INITFENCE               [ SKIP ]
     30rootpass*             ROOT_PASS
-    80tklbam                HUB_APIKEY              [ SKIP ]
+    75keel-role             database.server.role of the instance description
+    80keel-cloud            HUB_APIKEY              [ SKIP | the key ]
     85secalerts             SEC_ALERTS              [ SKIP ]
     95secupdates            SEC_UPDATES             [ SKIP | FORCE ]
 
+
+
+Notes on the Keel hooks:
+
+    - 75keel-role and 80keel-cloud (handbook decision 0020) run
+      confconsole's first boot screens, /usr/lib/confconsole/keelfirstboot.py,
+      and do nothing without confconsole. 75keel-role asks this node's
+      role, standalone (the default), primary or replica, and takes a
+      primary or a replica through confconsole's Overlay network and
+      Database mode screens; it is not asked when the instance description
+      declares database.server.role. 80keel-cloud offers an optional Keel
+      Cloud API key, kept in /etc/keel/secrets/cloud_api_key (0600) and
+      referenced as hub.api_key; empty means standalone. It is not asked
+      when the description declares hub.api_key or HUB_APIKEY is
+      preseeded, and a preseeded key is stored without a screen. It
+      replaces TurnKey's 80hub-services, which linked TKLBAM and HubDNS to
+      the TurnKey Hub. keel-init asks both again.
 
 
 Notes:

@@ -1,0 +1,18 @@
+#!/bin/bash -e
+# Ask this node's role in its appliance: standalone (the default), primary
+# or replica (handbook decision 0020). A primary or a replica is then taken
+# through the overlay and the database mode, the same confconsole screens
+# that finish the job later. Not asked when the instance description
+# declares database.server.role.
+#
+# Position: after the application's hooks (35mysqlpass and the ones
+# after it), because a replica replaces the database they created, and
+# before 80keel-cloud.
+
+INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
+# shellcheck source=default/inithooks
+source "$INITHOOKS_DEFAULT"
+# shellcheck source=lib/keel-firstboot.sh
+source "$INITHOOKS_PATH/lib/keel-firstboot.sh"
+
+keel_firstboot role

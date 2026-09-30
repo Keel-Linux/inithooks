@@ -1,0 +1,14 @@
+#!/bin/bash -e
+# Offer a Keel Cloud API key, optional; empty means standalone (handbook
+# decision 0020). It replaces TurnKey's 80hub-services: a Keel appliance
+# does not link to the TurnKey Hub. The key is kept in a secret file the
+# instance description references as hub.api_key. Not asked when the
+# description declares hub.api_key or HUB_APIKEY is preseeded.
+
+INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
+# shellcheck source=default/inithooks
+source "$INITHOOKS_DEFAULT"
+# shellcheck source=lib/keel-firstboot.sh
+source "$INITHOOKS_PATH/lib/keel-firstboot.sh"
+
+keel_firstboot cloud

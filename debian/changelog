@@ -1,3 +1,25 @@
+inithooks (2.3.6+keel13) trixie; urgency=medium
+
+  * firstboot.d/75keel-role: the first boot asks this node's role,
+    standalone (the default), primary or replica (handbook decision
+    0020). A primary or a replica is taken through confconsole's
+    Overlay network and Database mode screens; any step can be left
+    and finished later in confconsole. Not asked when the instance
+    description declares database.server.role.
+  * firstboot.d/80keel-cloud: an optional Keel Cloud API key, empty
+    meaning standalone, kept in /etc/keel/secrets/cloud_api_key (0600)
+    and referenced by the description as hub.api_key. Not asked when
+    the description declares hub.api_key or HUB_APIKEY is preseeded; a
+    preseeded key is stored without a screen.
+  * Both run confconsole's keelfirstboot.py through lib/keel-firstboot.sh
+    and do nothing, saying so, without it. Recommends confconsole
+    (>= 2.2.3+keel8~), the first with that entry point.
+  * Removed firstboot.d/80hub-services and bin/hubservices.py, the
+    TurnKey Hub screen that linked TKLBAM and HubDNS: a Keel appliance
+    does not depend on the TurnKey Hub. 80keel-cloud takes its place.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Wed, 30 Sep 2026 08:50:00 +0000
+
 inithooks (2.3.6+keel12) trixie; urgency=medium
 
   * restart-getty: a login prompt comes back on the tty the first boot
