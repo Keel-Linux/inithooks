@@ -1,6 +1,14 @@
 #!/bin/bash
 # Executed by init script
 
+# One first boot run at a time: keel-init refuses while this one holds the
+# lock, and this one waits while a keel-init holds it (lib/init-lock.sh).
+# Taken before the defaults are read, so that a run which waited reads the
+# RUN_FIRSTBOOT the other run left behind.
+# shellcheck source=lib/init-lock.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/init-lock.sh"
+init_lock_take "$INITHOOKS_LOCK" || exit 1
+
 # load/set general global vars
 INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
 # - give shellcheck explict repo path for linting package
@@ -9,6 +17,7 @@ source "$INITHOOKS_DEFAULT"
 TERM=${TERM:-linux}
 RUN_FIRSTBOOT="${RUN_FIRSTBOOT,,}"
 TKLINFO="${TKLINFO:-/var/lib/turnkey-info}"
+INITHOOKS_COMPLETE="${INITHOOKS_COMPLETE:-/run/inithooks-complete}"
 REDIRECT_OUTPUT="${REDIRECT_OUTPUT,,}"
 PID=
 REBOOT_REQUIRED=
@@ -68,7 +77,7 @@ if [[ "$REDIRECT_OUTPUT" == "true" ]]; then
         if [[ -z $TTY ]]; then
             TTY=console
         fi
-        tail -f "$INITHOOKS_LOGFILE" > "/dev/$TTY" &
+        tail -f "$INITHOOKS_LOGFILE" > "/dev/$TTY" {INIT_LOCK_FD}>&- &
         PID="$!"
     fi
 fi
@@ -88,6 +97,7 @@ exec_scripts() {
             source "$INITHOOKS_CONF"
         fi
         script=$(basename "$script_executable")
+        init_lock_describe "$INITHOOKS_LOCK" "${firstboot:-everyboot}" "$script"
         if [[ -n "$firstboot" ]]; then
             # if firstboot, then only run <30 scripts - then wait
             prefix="${script:0:2}"
@@ -100,7 +110,8 @@ exec_scripts() {
             continue
         fi
         log info "[$script] running"
-        "$script_executable"
+        # the hook does not get the lock's descriptor: see lib/init-lock.sh
+        "$script_executable" {INIT_LOCK_FD}>&-
         exit_code=$?
         if [[ "$exit_code" -eq 0 ]]; then
             log info "[$script] successfully completed"
@@ -121,12 +132,18 @@ if [[ "$RUN_FIRSTBOOT" == "true" ]]; then
     exec_scripts "$INITHOOKS_PATH/firstboot.d" firstboot
 fi
 
-# ensure everyboot scripts only run once per boot
-if [[ ! -f /run/inithooks-complete ]]; then
+# ensure everyboot scripts only run once per boot. The marker also tells
+# keel-init that the boot run of this boot is over (libinithooks/init_lock.py
+# boot_pending), so it is written whatever RUN_FIRSTBOOT says.
+if [[ ! -f "$INITHOOKS_COMPLETE" ]]; then
     log info "Running everyboot scripts"
     exec_scripts "$INITHOOKS_PATH/everyboot.d"
-    touch /run/inithooks-complete
+    touch "$INITHOOKS_COMPLETE"
 fi
+
+# no hook runs after this point; confconsole below stays up for as long as
+# the operator wants, and keel-init must not be refused because of it
+init_lock_release
 
 if [[ -n "$PID" ]];  then
     log info "Killing inithooks pid $PID"

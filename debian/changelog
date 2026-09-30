@@ -1,3 +1,52 @@
+inithooks (2.3.6+keel10) trixie; urgency=medium
+
+  * One first boot run at a time (Keel-Linux/inithooks#24). The boot run
+    and keel-init both hold an flock on /run/inithooks.lock for as long as
+    hooks run. keel-init refuses, with exit status 75, while another run
+    holds it, and says where that run waits: pct console <ctid> on
+    Proxmox, lxc-console -n <name> on LXC, or the VM's console. A
+    turnkey-init typed in a second shell had started a second run of the
+    same hooks, which set the root password and hung in the next dialog
+    while the boot run still waited on the console. The kernel drops the
+    lock when a run exits however it exits; hooks are not given its
+    descriptor, and it is released before confconsole starts.
+  * run: waits for a keel-init that holds the lock, then reads
+    RUN_FIRSTBOOT, so the firstboot scripts are not run again after a
+    keel-init completed them.
+  * keel-init does not run its own hooks before the first boot has
+    finished (RUN_FIRSTBOOT=true, as bash reads /etc/default/inithooks,
+    and no /run/inithooks-complete). inithooks.service starts after
+    getty.target, so a keel-init typed after pct enter could take the lock
+    first; the hooks skip what only a first boot does under keel-init,
+    98finalize set RUN_FIRSTBOOT=false, and the boot run then skipped the
+    first boot: the instance description was never applied and the
+    filesystem never grown. While inithooks.service is running or queued,
+    keel-init refuses with exit status 75. When nothing will run the first
+    boot (the unit stopped, failed, or skipped by its container
+    condition), keel-init runs the boot run, /usr/lib/inithooks/run, in
+    its place, rather than refusing until a reboot or for good.
+  * A relative dtach socket is named against the dtach's working
+    directory, so the attach hint works from any shell.
+  * The lock file describes its holder (kind, pid, tty, dtach socket,
+    phase, hook, preseeded), and the refusal is worded by it: a keel-init
+    in the dtach session of the first login names dtach -a and the socket,
+    a keel-init on a terminal names it, a preseeded boot run or the
+    everyboot phase says to wait, and only a boot run that asks questions
+    points at the console.
+  * keel-init tries the lock for half a second before refusing, so the
+    login message's probe of the lock cannot make it refuse.
+  * run: INITHOOKS_COMPLETE names the completion marker, for the tests.
+  * lintian: no-manual-page override for usr/sbin/keel-init.
+  * /etc/update-motd.d/06-keel-init: the login message says where the
+    first boot wizard waits while it runs, and to run keel-init while the
+    init fence is up and no run is in progress (keel-init --status).
+  * keel-init is the command, and turnkey-init a relative link to it,
+    both in /usr/sbin (Keel-Linux/inithooks#22, handbook decision 0015).
+    Help and messages name the command that was typed; the README and the
+    init fence page name keel-init. --help needs no root.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Wed, 30 Sep 2026 04:27:38 +0000
+
 inithooks (2.3.6+keel9) trixie; urgency=medium
 
   * 01ipconfig: a new key, IP6_SLAAC (yes or no, default yes). A static

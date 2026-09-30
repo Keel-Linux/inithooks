@@ -1,0 +1,14 @@
+#!/bin/sh
+# The login message while the first boot is not finished.
+#
+# While the first boot run waits for answers on the console, it says where
+# to answer them, so that nobody starts a second run from a shell (which
+# keel-init refuses anyway); while the init fence is up and no run is in
+# progress, it says to run keel-init. Otherwise it prints nothing. The
+# words are keel-init's own (keel-init --status), so the message and the
+# refusal cannot drift apart.
+
+KEEL_INIT=${KEEL_INIT:-/usr/sbin/keel-init}
+
+[ -x "$KEEL_INIT" ] || exit 0
+"$KEEL_INIT" --status || true
