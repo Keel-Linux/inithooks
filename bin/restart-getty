@@ -8,14 +8,109 @@
 # systems this loop should only run once. Even on low power systems it should
 # only loop 1 additional times. However to ensure that it is as robust as
 # possible, it will wait up to 10 secs for inithooks.service to stop.
+#
+# It brings a login prompt back on the tty the first boot wizard used (the
+# TTYPath of inithooks.service, resolved: /dev/lxc/tty1 in an LXC container).
+# The enabled getty unit for that tty is started when there is one and it
+# comes up. In a container it does not: there is no /dev/tty0, so
+# getty@tty1.service is skipped by its ConditionPathExists, and
+# container-getty@1.service is on /dev/pts/1 unless Proxmox pointed it at
+# lxc/tty1. agetty is then run on the wizard's tty in a transient unit.
 
 # systemd honors syslog-style priority prefixes on stdout/stderr
 # supports journalctl log level filtering - and colors the messages
 warn() { echo "<4>$*" >&2; }
 fatal() {
    echo "<3>$*" >&2
-   echo "<3>Please report to support@turnkeylinux.org"
+   echo "<3>Please report to https://github.com/Keel-Linux/inithooks/issues" >&2
    exit 1
+}
+
+GETTY_WANTS=${GETTY_WANTS:-/etc/systemd/system/getty.target.wants}
+GETTY1_SERVICES=(getty@tty1.service container-getty@1.service)
+
+# tty_path UNIT: the tty UNIT is attached to, links resolved
+tty_path() {
+    local path
+    path=$(systemctl show -P TTYPath "$1")
+    readlink -f "${path:-/dev/tty1}"
+}
+
+# enabled_getty1: the first of GETTY1_SERVICES linked in getty.target.wants
+enabled_getty1() {
+    local unit
+    for unit in "${GETTY1_SERVICES[@]}"; do
+        if [[ -L "$GETTY_WANTS/$unit" ]] && [[ -f "$GETTY_WANTS/$unit" ]]; then
+            echo "$unit"
+            return
+        fi
+    done
+}
+
+wait_for_inithooks() {
+    local i
+    for i in {10..1}; do
+        if ! systemctl is-active -q inithooks.service; then
+            echo "inithooks.service is not running"
+            return
+        fi
+        warn "inithooks.service running - waiting $i more seconds for it to stop"
+        sleep 1
+    done
+    if systemctl is-active -q inithooks.service; then
+        fatal "inithooks.service did not stop - no getty started"
+    fi
+}
+
+# start_unit UNIT: succeeds when UNIT is running afterwards
+start_unit() {
+    local unit=$1
+    if systemctl is-active -q "$unit"; then
+        warn "$unit already running, nothing to do"
+        return
+    fi
+    echo "Starting $unit..."
+    systemctl start "$unit" || return 1
+    # because getty units are 'Type=idle', and one whose condition fails is
+    # skipped, systemctl start may exit zero with nothing running
+    systemctl is-active -q "$unit" || return 1
+    echo "$unit started..."
+}
+
+# start_agetty TTY: agetty on TTY in a transient unit, set up as getty@.service
+start_agetty() {
+    local tty=$1
+    local unit
+    unit="inithooks-getty-$(basename "$tty").service"
+    if systemctl is-active -q "$unit"; then
+        warn "$unit already running, nothing to do"
+        return
+    fi
+    echo "Starting agetty on $tty ($unit)..."
+    # a unit of the same name left failed by an earlier run blocks systemd-run
+    systemctl reset-failed "$unit" 2>/dev/null || true
+    if ! systemd-run --unit="$unit" \
+            --description="Getty on $tty (inithooks)" \
+            --property=Type=idle \
+            --property=Restart=always \
+            --property=RestartSec=0 \
+            --property=UtmpIdentifier="${tty#/dev/}" \
+            --property=StandardInput=tty \
+            --property=StandardOutput=tty \
+            --property=TTYPath="$tty" \
+            --property=TTYReset=yes \
+            --property=TTYVHangup=yes \
+            --property=IgnoreSIGPIPE=no \
+            --property=SendSIGHUP=yes \
+            --property=Conflicts=rescue.service \
+            --property=Before=rescue.service \
+            /sbin/agetty -o '-- \u' --noreset --noclear - linux; then
+        fatal "Failed to start agetty on $tty"
+    fi
+    if ! systemctl is-active -q "$unit"; then
+        fatal "$unit failed"
+    fi
+    echo "$unit started..."
 }
 
 # only run this script if started by systemd
@@ -26,54 +121,24 @@ else
     exit 0
 fi
 
-getty1_services=(getty@tty1.service container-getty@1.service)
-getty_target=/etc/systemd/system/getty.target.wants
-getty1_service=""
+wait_for_inithooks
 
-for _getty1 in "${getty1_services[@]}"; do
-    _getty_target="$getty_target/$_getty1"
-    if [[ -L "$_getty_target" ]]; then
-        if [[ -f "$_getty_target" ]]; then
-            getty1_service="$_getty1"
-            echo "Found default system getty service: '$getty1_service'"
-            break
-        fi
-    fi
-done
+wizard_tty=$(tty_path inithooks.service)
+echo "The first boot wizard ran on $wizard_tty"
+
+getty1_service=$(enabled_getty1)
 if [[ -z "$getty1_service" ]]; then
-    fatal "Could not find valid getty1 service (tried ${getty1_services[*]})"
+    warn "No getty unit enabled for tty1 (tried ${GETTY1_SERVICES[*]})"
+else
+    echo "Found default system getty service: '$getty1_service'"
+    getty1_tty=$(tty_path "$getty1_service")
+    if [[ "$getty1_tty" != "$wizard_tty" ]]; then
+        warn "$getty1_service is on $getty1_tty, not $wizard_tty"
+    elif start_unit "$getty1_service"; then
+        exit 0
+    else
+        warn "$getty1_service did not start on $wizard_tty"
+    fi
 fi
 
-echo "Starting $getty1_service"
-for i in {10..0}; do
-    if systemctl is-active -q inithooks.service; then
-        msg="inithooks.service running"
-        if [[ $1 -gt 0 ]]; then
-            msg="inithooks.service running"
-            warn "$msg - waiting $i more seconds for it to stop" >&2
-        else
-            warn "Failed to stop inithooks.service - giving up..."
-            fatal "$getty1_service could not be started"
-        fi
-        sleep 1
-    else
-        echo "inithooks.service is not running"
-        if systemctl is-active -q "$getty1_service"; then
-            warn "$getty1_service already running, nothing to do"
-        else
-            echo "Starting $getty1_service..."
-            if ! systemctl start "$getty1_service"; then
-                fatal "Failed to start $getty1_service"
-            else
-                # because getty@.service is 'Type=idle' systemctl start may
-                # exit zero even if it fails, so double check to be sure
-                if ! systemctl is-active -q "$getty1_service"; then
-                    fatal "$getty1_service failed"
-                else
-                    echo "$getty1_service started..."
-                fi
-            fi
-        fi
-        exit 0
-    fi
-done
+start_agetty "$wizard_tty"

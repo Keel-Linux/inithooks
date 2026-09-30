@@ -1,3 +1,21 @@
+inithooks (2.3.6+keel12) trixie; urgency=medium
+
+  * restart-getty: a login prompt comes back on the tty the first boot
+    wizard used, in a container too. In plain LXC and on Proxmox the
+    wizard runs on /dev/tty1, a link to lxc/tty1, and there is no
+    /dev/tty0, so getty@tty1.service was skipped by its
+    ConditionPathExists and the console was left dead after the usage
+    screen. The enabled getty unit is still started when it is on the
+    wizard's tty and comes up (getty@tty1 on a VM, container-getty@1 as
+    Proxmox points it at lxc/tty1); otherwise agetty runs on that tty in
+    a transient unit, inithooks-getty-tty1.service, set up as
+    getty@.service is. A failure is reported to the Keel-Linux/inithooks
+    issues, not to support@turnkeylinux.org. The wait for
+    inithooks.service to stop tested $1 for $i, so it gave up at once.
+    Tests in tests/test-restart-getty.bats.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Wed, 30 Sep 2026 08:31:12 +0000
+
 inithooks (2.3.6+keel11) trixie; urgency=medium
 
   * dialog_wrapper: get_password() offers a generated password
