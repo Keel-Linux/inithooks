@@ -60,6 +60,26 @@ The configuration dialogs run in one of two places:
     with the system at boot time. In that case the interactive first boot
     scripts will immediately present once logged in.
 
+Only one run of the configuration dialogs can be in progress at a time. The
+first boot run and "keel-init" both hold a lock, /run/inithooks.lock (an
+flock the kernel releases when the run exits, however it exits), for as long
+as hooks run, and describes itself in it. While another run holds the lock,
+"keel-init" refuses (exit status 75) and says where that run is: a first
+boot run that asks questions waits on the console ("pct console <ctid>" on
+Proxmox, "lxc-console -n <name>" on LXC, or the VM's console), a
+"keel-init" left in the dtach session of the first login is reached with
+"dtach -a" and its socket, and a preseeded run or the everyboot phase only
+has to be waited for. Before the first boot has finished
+(RUN_FIRSTBOOT=true and no /run/inithooks-complete), "keel-init" does not
+run its own hooks, since under "keel-init" the hooks skip what only a first
+boot does: it refuses while inithooks.service is running or queued, and
+when nothing will run the first boot (the unit stopped, failed, or skipped
+by its condition in a container) it runs /usr/lib/inithooks/run itself,
+which does the whole first boot on the operator's terminal. The login
+message says the same, from /etc/update-motd.d/06-keel-init, and "run
+keel-init" while the initialization fence is up and no run is in progress.
+The first boot run itself waits for a "keel-init" that holds the lock.
+
 
 Non-interactive system initialization
 -------------------------------------
@@ -210,16 +230,18 @@ firstboot.d scripts
 Scripts in the firstboot.d sub-directory are executed under the
 following conditions:
 
-#. If the user executes "turnkey-init" from a root shell. This command
+#. If the user executes "keel-init" from a root shell. This command
    can be used to rerun the firstboot.d inithooks interactively to
    reconfigure the appliance if needed. Certain scripts such as those that
    regenerate secret keys are skipped. If developing a hook script that is only
-   intended to run at first boot - i.e. not when "turnkey-init" is run, check
-   the value of the "$_TURNKEY_INIT" env var. When "turnkey-init" runs, it is
-   set to 1 - otherwise it should be unset.
+   intended to run at first boot - i.e. not when "keel-init" is run, check
+   the value of the "$_TURNKEY_INIT" env var. When "keel-init" runs, it is
+   set to 1 - otherwise it should be unset. "turnkey-init" is a link to
+   "keel-init" and does the same, so that TurnKey's documentation and
+   existing scripts keep working.
 
 #. When the user logs in as root for the first time into a headless
-   system. This triggers "turnkey-init" to run so that the user can
+   system. This triggers "keel-init" to run so that the user can
    interactively complete appliance initialization.
 
 #. When a TurnKey appliance boots for the first time inithooks checks whether
@@ -236,7 +258,7 @@ For these build types unless all values are pre-seeded, the user accesses the
 interactive hook scripts directly via the virtual console (usually tty1). They
 will be displayed prior to first login and the first script the user will see
 is setting the root password. These are the same scripts that get executed if
-you run "turnkey-init" later.
+you run "keel-init" later.
 
 **Headless builds**: (e.g AWS Marketplace, LXC (Proxmox), etc):
 
@@ -293,7 +315,7 @@ interactive initialization hooks when they first log in.
 
    what command are we running in the dtach session?
 
-        turnkey-init -> deactivate initfence (service and profile.d)
+        keel-init -> deactivate initfence (service and profile.d)
 
 everyboot.d scripts
 '''''''''''''''''''

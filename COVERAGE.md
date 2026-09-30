@@ -24,7 +24,65 @@ statements, 4 missed, 98 percent. The missed lines are line 22 (`LOG_LEVEL`
 under `DIALOG_DEBUG`, set at import) and lines 601 to 603 of `get_domain`,
 a branch on a message `validate_domain` never returns, which would raise
 `NameError` on `p` if it could run (inherited). Python total 99 percent,
-257 passed and 3 skipped (the vocabulary tests, without `KEEL_SRC`).
+359 passed and 3 skipped (the vocabulary tests, without `KEEL_SRC`) with
+master merged, `init_lock.py` of fix/one-first-boot-run included.
+
+## Branch fix/one-first-boot-run, second review: shell 99.71, Python 99
+
+A pending first boot that nothing runs (the unit stopped, failed, or
+skipped by its container condition) is run by keel-init through the boot
+run instead of being refused; RUN_FIRSTBOOT is read by bash; a relative
+dtach socket is made absolute. `libinithooks/init_lock.py` 173 statements,
+36 branches, 100 percent, from 102 tests in `tests/test_init_lock.py`,
+including a stopped unit, a failed one, a skipped one, and a boot run
+killed in its wizard, each followed by the real `run` doing the first
+boot. Python total 99. Shell unchanged: 198 bats, 99.71. Making keel-init
+refuse in those states again fails four tests.
+
+`tests/test_vocabulary.py` fails two tests locally when a sibling `keel`
+checkout older than keel#48 is found by default (no `ipv6.slaac`); with
+`KEEL_SRC` at current keel main, master and this branch pass. CI skips
+those tests.
+
+## Branch fix/one-first-boot-run, after review: shell 99.71, Python 99
+
+keel-init refuses before the first boot's own run has finished, the lock
+file describes its holder so the refusal can say where it is, and keel-init
+retries the lock briefly. `lib/init-lock.sh` 22/22;
+`tests/test-init-lock.bats` 12 tests, `tests/test-run.bats` 17, 198 bats
+in all, shell total 99.71. `libinithooks/init_lock.py` 154 statements, 36
+branches, 100 percent, from 78 tests in `tests/test_init_lock.py`; Python
+total 99. The race is tested with the real `run`: keel-init first is
+refused and leaves the lock, the boot run then runs the firstboot hook and
+writes its marker, and keel-init runs after it. Mutations checked: without
+the first boot check three tests fail, without the description in `run`
+three bats fail.
+
+## Branch fix/one-first-boot-run: shell 99.71 percent, Python 99 (2026-09-30)
+
+One first boot run at a time (Keel-Linux/inithooks#24) and `keel-init` as
+the command, `turnkey-init` a relative link to it (Keel-Linux/inithooks#22).
+
+Shell: `lib/init-lock.sh` is new, 21/21 under kcov 43, from
+`tests/test-init-lock.bats` (10 tests) and the six lock tests added to
+`tests/test-run.bats` (13 in the file). `tests/test-motd.bats` (4 tests)
+runs `update-motd.d/06-keel-init`; like `run`, it sits outside the
+directories `coverage.sh` measures. 192 bats in all, total 99.71, the
+lowest file still `lib/init-fence.sh` at 98.81; the gate stays at 98.
+
+Python: `libinithooks/init_lock.py` is new and joins the measured files in
+`pyproject.toml`: 63 statements, 4 branches, 100 percent, from
+`tests/test_init_lock.py` (38 tests). `keel-init` itself is at the top of
+the tree, outside `--source=libinithooks,bin`, so the logic it adds is in
+the library; the tests still load and run the command in process, run it
+and its link as processes, and start the real `run` waiting in a hook to
+check that keel-init refuses and names that run's pid. Total 99.
+
+Every lock is a real flock(2) on a scratch file, taken on the other side by
+another process or the util-linux `flock` command, never a stub. Mutations
+checked: removing the lock from `run`, the release before confconsole, or
+the close of the descriptor for each hook, and in `keel-init` the lock or
+its release, each turns the suites red.
 
 ## Branch feat/static-ipv6-slaac: shell 99.69 percent (2026-09-30)
 

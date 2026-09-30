@@ -8,7 +8,11 @@
   paths, with external commands (`ip`, `ifup`, `systemctl`, `iptables`,
   `ip6tables`, `turnkey-version`, `head`) replaced by stubs placed first in
   `PATH`. Nothing in a test touches the live system.
-- `helpers.bash`: the stub helpers (`setup_stubs`, `stub`, `calls`).
+- `helpers.bash`: the stub helpers (`setup_stubs`, `stub`, `calls`), and
+  `eventually` and `let_go` for tests that wait on another process.
+- `test_init_lock.py`: pytest tests of the first boot lock
+  (`libinithooks/init_lock.py`), of `keel-init` and its `turnkey-init`
+  link, and of `keel-init` against a real `run` waiting in a hook.
 - `coverage.sh`: runs the bats tests under kcov and fails when a measured
   file is below 95 percent of executed lines.
 - `test_declarative*.py`: pytest tests of `libinithooks/declarative.py` and

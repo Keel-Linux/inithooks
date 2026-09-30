@@ -17,6 +17,7 @@ inithooks binary: recursive-privilege-change "chown -R" [postinst:9]
 # TODO (wishlist):
 # - man files...
 
+inithooks binary: no-manual-page [usr/sbin/keel-init]
 inithooks binary: no-manual-page [usr/sbin/turnkey-init]
 inithooks binary: no-manual-page [usr/sbin/turnkey-install-security-updates]
 inithooks binary: no-manual-page [usr/sbin/turnkey-sudoadmin]
