@@ -80,10 +80,13 @@ start_unit() {
 # start_agetty TTY: agetty on TTY in a transient unit, set up as getty@.service
 start_agetty() {
     local tty=$1
-    local unit
+    local unit state
     unit="inithooks-getty-$(basename "$tty").service"
-    if systemctl is-active -q "$unit"; then
-        warn "$unit already running, nothing to do"
+    # between two runs of agetty (Restart=always) the unit is activating,
+    # not active, and systemd-run would refuse it as existing
+    state=$(systemctl show -P ActiveState "$unit")
+    if [[ -n "$state" && "$state" != inactive && "$state" != failed ]]; then
+        warn "$unit already running ($state), nothing to do"
         return
     fi
     echo "Starting agetty on $tty ($unit)..."
@@ -103,6 +106,7 @@ start_agetty() {
             --property=IgnoreSIGPIPE=no \
             --property=SendSIGHUP=yes \
             --property=Conflicts=rescue.service \
+            --property=Conflicts=inithooks.service \
             --property=Before=rescue.service \
             /sbin/agetty -o '-- \u' --noreset --noclear - linux; then
         fatal "Failed to start agetty on $tty"

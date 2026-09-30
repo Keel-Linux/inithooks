@@ -9,7 +9,9 @@ inithooks (2.3.6+keel12) trixie; urgency=medium
     wizard's tty and comes up (getty@tty1 on a VM, container-getty@1 as
     Proxmox points it at lxc/tty1); otherwise agetty runs on that tty in
     a transient unit, inithooks-getty-tty1.service, set up as
-    getty@.service is. A failure is reported to the Keel-Linux/inithooks
+    getty@.service is, which conflicts with inithooks.service so the
+    wizard never shares the tty with it, and which a second run leaves
+    alone between two agetty runs. A failure is reported to the Keel-Linux/inithooks
     issues, not to support@turnkeylinux.org. The wait for
     inithooks.service to stop tested $1 for $i, so it gave up at once.
     Tests in tests/test-restart-getty.bats.

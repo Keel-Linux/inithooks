@@ -24,7 +24,8 @@ SCRIPT=$REPO/bin/restart-getty
 setup() {
     setup_stubs
     STATE=$BATS_TEST_TMPDIR/state
-    mkdir -p "$STATE/active" "$STATE/startable" "$STATE/ttypath" "$STATE/fail-start"
+    mkdir -p "$STATE/active" "$STATE/startable" "$STATE/ttypath" "$STATE/fail-start" \
+        "$STATE/activestate"
     stub sleep
 
     # systemctl: is-active, show -P TTYPath, start and reset-failed, from
@@ -45,7 +46,17 @@ case \$1 in
         [[ -e \"\$state/active/\$unit\" ]] && exit 0
         exit 3 ;;
     show)
-        cat \"\$state/ttypath/\$unit\" 2>/dev/null
+        if [[ \$3 == ActiveState ]]; then
+            if [[ -e \"\$state/activestate/\$unit\" ]]; then
+                cat \"\$state/activestate/\$unit\"
+            elif [[ -e \"\$state/active/\$unit\" ]]; then
+                echo active
+            else
+                echo inactive
+            fi
+        else
+            cat \"\$state/ttypath/\$unit\" 2>/dev/null
+        fi
         exit 0 ;;
     start)
         [[ -e \"\$state/fail-start/\$unit\" ]] && exit 1
@@ -240,13 +251,38 @@ active() {
     [ -z "$(calls systemd-run)" ]
 }
 
+@test "an agetty of ours between restarts is left alone" {
+    container
+    # Restart=always: ActiveState is activating while SubState is auto-restart
+    echo activating > "$STATE/activestate/inithooks-getty-tty1.service"
+
+    run "$SCRIPT"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"inithooks-getty-tty1.service already running (activating)"* ]]
+    [ -z "$(calls systemd-run)" ]
+}
+
 @test "a failed agetty unit of an earlier run is reset before the new one" {
     container
+    echo failed > "$STATE/activestate/inithooks-getty-tty1.service"
 
     run "$SCRIPT"
 
     [ "$status" -eq 0 ]
     grep -qx 'reset-failed inithooks-getty-tty1.service' <<< "$(calls systemctl)"
+    [ -n "$(calls systemd-run)" ]
+}
+
+@test "the agetty unit conflicts with inithooks.service" {
+    # so a second start of inithooks.service stops it, and the wizard does
+    # not share the tty with a login prompt
+    container
+
+    run "$SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -q -- "--property=Conflicts=inithooks.service" <<< "$(calls systemd-run)"
 }
 
 @test "systemd-run failing is fatal, and says where to report it" {
