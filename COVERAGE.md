@@ -4,6 +4,28 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch feat/generated-password: dialog_wrapper.py 98 percent (2026-09-30)
+
+`libinithooks/dialog_wrapper.py` leaves the `omit` list of
+`pyproject.toml` and joins `include`: it was 0 percent, with no test.
+`tests/test_dialog_wrapper.py` (57 tests) drives it through
+`tests/fake_dialog.py`, a stand-in for pythondialog that answers each
+widget from a script and records what was shown, so no terminal is needed:
+the generator (alphabet, length, classes, exclusions, the secrets module),
+the generate path, the refused confirmation, the manual path and its
+refusals, `offer_generate=False`, ESC on the menu, the logs (a file handler
+at DEBUG on the root logger, as `DIALOG_DEBUG` gives `/var/log/dialog.log`,
+must not contain the generated or the typed password), the screen drawn on
+the terminal with a captured stdout, and the other widgets and
+`validate_domain`.
+
+Measured with `coverage run --branch --source=libinithooks,bin`: 285
+statements, 4 missed, 98 percent. The missed lines are line 22 (`LOG_LEVEL`
+under `DIALOG_DEBUG`, set at import) and lines 601 to 603 of `get_domain`,
+a branch on a message `validate_domain` never returns, which would raise
+`NameError` on `p` if it could run (inherited). Python total 99 percent,
+257 passed and 3 skipped (the vocabulary tests, without `KEEL_SRC`).
+
 ## Branch feat/static-ipv6-slaac: shell 99.69 percent (2026-09-30)
 
 `lib/ipconfig.sh` gains `ipconfig_render_slaac6`, `ipconfig_valid_slaac`,
