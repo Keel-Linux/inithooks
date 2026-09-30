@@ -17,8 +17,13 @@ export PYTHONDONTWRITEBYTECODE=1
 # upgrade from a version that did not enable it, and never started by the
 # package: started inside an image build it would bake the keys it exists to
 # keep out of the image. It runs at the next boot.
+# --no-start alone also turns off restart-after-upgrade, and debhelper then
+# stops each unit in preinst on every upgrade: keel-host-keys would stay
+# inactive until a reboot and confconsole would leave tty1. So no unit is
+# stopped on upgrade either. With both flags debhelper does not stop them on
+# removal either, so debian/prerm does that.
 override_dh_installsystemd:
-	dh_installsystemd --name=inithooks --no-enable --no-start
-	dh_installsystemd --name=inithooks-restart-getty1 --no-enable --no-start
-	dh_installsystemd --name=turnkey-init-fence --no-enable --no-start
-	dh_installsystemd --name=keel-host-keys --no-start
+	dh_installsystemd --name=inithooks --no-enable --no-start --no-stop-on-upgrade
+	dh_installsystemd --name=inithooks-restart-getty1 --no-enable --no-start --no-stop-on-upgrade
+	dh_installsystemd --name=turnkey-init-fence --no-enable --no-start --no-stop-on-upgrade
+	dh_installsystemd --name=keel-host-keys --no-start --no-stop-on-upgrade

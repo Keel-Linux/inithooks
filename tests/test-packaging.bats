@@ -72,6 +72,26 @@ packaged_scripts() {
     run ! grep -E 'deb-systemd-invoke (start|restart)|systemctl .*start keel-host-keys' "$DEBIAN/postinst"
 }
 
+# --no-start alone turns off restart-after-upgrade, and debhelper then stops
+# every unit in preinst on an upgrade: keel-host-keys inactive until a reboot,
+# confconsole gone from tty1. master's preinst stops nothing.
+@test "the packaged preinst stops no unit on an upgrade" {
+    packaged_scripts
+    run ! grep 'deb-systemd-invoke stop' "$DEBIAN/preinst"
+}
+
+# prerm stops the units when the package is removed, as master's did, and
+# never on an upgrade: every stop sits under a `"$1" = remove` guard.
+@test "the packaged prerm stops the fence on removal" {
+    packaged_scripts
+    grep -q 'for unit in turnkey-init-fence ' "$DEBIAN/prerm"
+}
+
+@test "the packaged prerm stops a unit only on removal" {
+    packaged_scripts
+    run ! awk '/"\$1" = remove/ { guard = 1 } /deb-systemd-invoke stop/ && !guard { bad = 1 } /^fi/ { guard = 0 } END { exit !bad }' "$DEBIAN/prerm"
+}
+
 # With --no-enable, debhelper only refreshes the links of a unit it already
 # installed and that is enabled, under a `debian-installed` guard; the first
 # enable stays with debian/postinst. keel-host-keys.service must not be under

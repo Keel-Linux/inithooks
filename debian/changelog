@@ -10,7 +10,10 @@ inithooks (2.3.6+keel14) trixie; urgency=medium
     version that did not, and keeps it from enabling or starting inithooks,
     inithooks-restart-getty1 and turnkey-init-fence, which postinst still
     handles itself. No unit is started by the package: keel-host-keys runs
-    at the next boot, not inside an image build.
+    at the next boot, not inside an image build. No unit is stopped on an
+    upgrade either (--no-stop-on-upgrade), so a live upgrade leaves
+    keel-host-keys active and confconsole on tty1; a new debian/prerm
+    stops the units on removal, as the package did before.
   * The generated postinst now also byte-compiles the Python modules
     (dh_python3), which the missing token had skipped as well.
   * tests/test-packaging.bats runs debhelper over debian/ and checks the

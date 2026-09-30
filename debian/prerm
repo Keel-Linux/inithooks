@@ -1,0 +1,16 @@
+#!/bin/sh
+
+set -e
+
+# Stop the units when the package is removed, never on an upgrade. debhelper
+# would do it too, but debian/rules passes --no-start --no-stop-on-upgrade,
+# which leaves no stop at all; the fence must not keep its rules once gone.
+if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+    for unit in turnkey-init-fence inithooks-restart-getty1 inithooks keel-host-keys; do
+        deb-systemd-invoke stop "$unit.service" >/dev/null || true
+    done
+fi
+
+#DEBHELPER#
+
+exit 0
