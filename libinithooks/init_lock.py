@@ -20,9 +20,16 @@ to answer. The description is only read while the lock is held.
 
 keel-init does not wait for the lock, it refuses and says where the run in
 progress is. The boot run waits, since it cannot be asked to come back
-later (lib/init-lock.sh). keel-init also refuses before the boot run of the
-first boot has run (boot_pending): hooks under keel-init skip what only a
-first boot does, and the boot run would then find the first boot done.
+later (lib/init-lock.sh).
+
+Before the first boot has finished (boot_pending), keel-init must not run
+its own hooks: under keel-init they skip what only a first boot does, and
+the boot run would then find the first boot done. If inithooks.service is
+running or queued (boot_unit_state), keel-init refuses and points at the
+console. If nothing will run it (the unit stopped, failed, or skipped by
+its condition in a container), refusing would lock the operator out until
+a reboot, or for good; keel-init runs the boot run itself instead, which
+does the whole first boot.
 """
 
 import fcntl
@@ -182,17 +189,50 @@ def boot_pending(default: str, complete: str) -> bool:
     """
     if os.path.exists(complete):
         return False
+    return run_firstboot(default).lower() == "true"
+
+
+def run_firstboot(default: str) -> str:
+    """RUN_FIRSTBOOT as run gets it: DEFAULT sourced by bash, so that
+    `export`, quotes and trailing comments mean what they mean to run"""
+    script = (
+        'unset RUN_FIRSTBOOT; source "$1" >/dev/null 2>&1;'
+        ' printf %s "$RUN_FIRSTBOOT"'
+    )
     try:
-        with open(default) as fob:
-            lines = fob.read().splitlines()
-    except FileNotFoundError:
-        return False
-    value = ""
-    for line in lines:
-        key, sep, rest = line.strip().partition("=")
-        if sep and key == "RUN_FIRSTBOOT":
-            value = rest.strip().strip("\"'")
-    return value.lower() == "true"
+        done = subprocess.run(
+            ["bash", "-c", script, "bash", default],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return ""
+    return done.stdout
+
+
+# systemctl is-active states in which inithooks.service is running, or
+# about to, or still stopping: its run holds the lock or is about to
+UNIT_RUNNING = ("active", "activating", "reloading", "deactivating")
+
+
+def boot_unit_state(unit: str = "inithooks.service") -> str:
+    """'running' while the unit runs, 'queued' while a start job waits
+    (the unit is ordered after getty.target), 'stopped' otherwise: stopped,
+    failed, skipped by a condition, or no systemctl to ask"""
+    try:
+        active = subprocess.run(
+            ["systemctl", "is-active", unit], capture_output=True, text=True
+        ).stdout.strip()
+        if active in UNIT_RUNNING:
+            return "running"
+        jobs = subprocess.run(
+            ["systemctl", "list-jobs", "--no-legend", unit],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except OSError:
+        return "stopped"
+    return "queued" if jobs else "stopped"
 
 
 def default_path() -> str:
@@ -214,6 +254,19 @@ def _cmdline(pid: int, proc: str) -> list[str]:
         return fob.read().decode("utf-8", "replace").split("\0")
 
 
+def _absolute(socket: str, pid: int, proc: str) -> str:
+    """SOCKET as dtach PID named it, made absolute against its working
+    directory, so the attach hint works from any shell; as named when
+    that directory cannot be read"""
+    if os.path.isabs(socket):
+        return socket
+    try:
+        cwd = os.readlink(os.path.join(proc, str(pid), "cwd"))
+    except OSError:
+        return socket
+    return os.path.normpath(os.path.join(cwd, socket))
+
+
 def dtach_socket(pid: int, proc: str = "/proc") -> str:
     """The socket of the dtach session PID runs in, or ''"""
     for _ in range(DTACH_DEPTH):
@@ -224,7 +277,7 @@ def dtach_socket(pid: int, proc: str = "/proc") -> str:
                 and len(argv) > 2
                 and argv[1] in DTACH_CREATE
             ):
-                return argv[2]
+                return _absolute(argv[2], pid, proc)
             pid = _ppid(pid, proc)
         except (OSError, ValueError, IndexError):
             return ""
@@ -309,10 +362,28 @@ def wait_message(run: Run, virt: str) -> str:
 
 
 def pending_message(virt: str) -> str:
-    """Why keel-init refuses before the boot run of the first boot"""
+    """Why keel-init refuses while the boot run of the first boot is
+    running or about to (boot_unit_state not 'stopped')"""
     return (
-        "the first boot has not finished yet: its own run starts at boot"
-        " and asks its questions on the console, answer them there:"
-        f" {console_hint(virt)}. keel-init reconfigures the machine once"
-        " that run has finished."
+        "the first boot has not finished yet: its own run"
+        " (inithooks.service) is starting, and asks its questions on the"
+        f" console, answer them there: {console_hint(virt)}. keel-init"
+        " reconfigures the machine once that run has finished."
+    )
+
+
+def takeover_message(run: str) -> str:
+    """What keel-init says before it runs a first boot nothing else will"""
+    return (
+        "the first boot has not finished and inithooks.service is not"
+        " running it (stopped, failed, or skipped by its condition);"
+        f" running the whole first boot here instead: {run}"
+    )
+
+
+def not_run_message() -> str:
+    """The login message while a first boot is pending that nothing runs"""
+    return (
+        "the first boot has not finished and nothing is running it:"
+        " run keel-init to run it."
     )

@@ -109,6 +109,25 @@ def hook(directory, name, body):
     executable(str(directory / name), "#!/bin/bash\n" + body + "\n")
 
 
+def unit(stubs, state, jobs=""):
+    """A systemctl stub for which inithooks.service is in STATE, with the
+    queued JOBS; anything else it is asked is answered 'running', as the
+    runner's is-system-running wants"""
+    executable(
+        str(stubs / "systemctl"),
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            case "$1" in
+                is-active) echo {state}; [ {state} = active ] ;;
+                list-jobs) printf '%s' '{jobs}' ;;
+                *) echo running ;;
+            esac
+            """
+        ),
+    )
+
+
 # the library
 
 
@@ -392,10 +411,10 @@ def test_wait_message_of_a_keel_init_without_a_terminal():
 
 def test_pending_message():
     assert init_lock.pending_message("kvm") == (
-        "the first boot has not finished yet: its own run starts at boot"
-        " and asks its questions on the console, answer them there:"
-        " the VM's console. keel-init reconfigures the machine once that"
-        " run has finished."
+        "the first boot has not finished yet: its own run"
+        " (inithooks.service) is starting, and asks its questions on the"
+        " console, answer them there: the VM's console. keel-init"
+        " reconfigures the machine once that run has finished."
     )
 
 
@@ -441,6 +460,79 @@ def test_boot_paths(monkeypatch):
     monkeypatch.setenv("INITHOOKS_COMPLETE", "/c")
     assert init_lock.default_path() == "/d"
     assert init_lock.complete_path() == "/c"
+
+
+@pytest.mark.parametrize(
+    "text, value",
+    [
+        ("RUN_FIRSTBOOT=true # redo\n", "true"),
+        ("export RUN_FIRSTBOOT=true\n", "true"),
+        ("RUN_FIRSTBOOT='TRUE'\n", "TRUE"),
+        ("RUN_FIRSTBOOT=true\nRUN_FIRSTBOOT=false\n", "false"),
+        ("#RUN_FIRSTBOOT=true\n", ""),
+        ("RUN_FIRSTBOOT=\"tr\"'ue'\n", "true"),
+    ],
+)
+def test_run_firstboot_reads_the_file_as_run_does(tmp_path, text, value):
+    default = tmp_path / "default"
+    default.write_text(text)
+    assert init_lock.run_firstboot(str(default)) == value
+
+
+def test_run_firstboot_ignores_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("RUN_FIRSTBOOT", "true")
+    default = tmp_path / "default"
+    default.write_text("SUDOADMIN=false\n")
+    assert init_lock.run_firstboot(str(default)) == ""
+
+
+def test_run_firstboot_without_bash(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert init_lock.run_firstboot("/nonexistent") == ""
+
+
+def test_boot_pending_with_a_comment_and_export(tmp_path):
+    default = tmp_path / "default"
+    default.write_text("export RUN_FIRSTBOOT=true # redo\n")
+    missing = str(tmp_path / "complete")
+    assert init_lock.boot_pending(str(default), missing) is True
+
+
+@pytest.mark.parametrize(
+    "active, jobs, state",
+    [
+        ("active", "", "running"),
+        ("activating", "", "running"),
+        ("deactivating", "", "running"),
+        ("inactive", "7 inithooks.service start waiting", "queued"),
+        ("inactive", "", "stopped"),
+        ("failed", "", "stopped"),
+    ],
+)
+def test_boot_unit_state(stubs, active, jobs, state):
+    unit(stubs, active, jobs)
+    assert init_lock.boot_unit_state() == state
+
+
+def test_boot_unit_state_without_systemctl(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert init_lock.boot_unit_state() == "stopped"
+
+
+def test_dtach_socket_named_relative_to_the_dtach_cwd(tmp_path):
+    # dtach -A s ...: the socket is where dtach was started, not here
+    proc = tmp_path / "proc"
+    fake_process(proc, 40, 1, ["dtach", "-A", "sock/s", "-Ez", "bash"])
+    os.symlink("/root/work", proc / "40" / "cwd")
+    fake_process(proc, 60, 40, ["keel-init"])
+    assert init_lock.dtach_socket(60, str(proc)) == "/root/work/sock/s"
+
+
+def test_dtach_socket_relative_when_the_cwd_cannot_be_read(tmp_path):
+    proc = tmp_path / "proc"
+    fake_process(proc, 40, 1, ["dtach", "-c", "s", "bash"])
+    fake_process(proc, 60, 40, ["keel-init"])
+    assert init_lock.dtach_socket(60, str(proc)) == "s"
 
 
 def fake_process(proc, pid, ppid, argv, name="cmd"):
@@ -544,6 +636,7 @@ def test_keel_init_refuses_before_the_boot_run_of_the_first_boot(
     has started. Under keel-init the hooks skip what only a first boot
     does, and the boot run would then find the first boot done."""
     executable(str(stubs / "systemd-detect-virt"), "#!/bin/sh\necho lxc\n")
+    unit(stubs, "activating")
     keel_init.default.write_text("RUN_FIRSTBOOT=true\n")
     seen = tmp_path / "seen"
     hook(keel_init.firstboot, "05autogrow-fs", f"echo ran >> '{seen}'")
@@ -556,11 +649,24 @@ def test_keel_init_refuses_before_the_boot_run_of_the_first_boot(
     # the lock is let go, for the boot run that is about to start
     assert init_lock.in_progress(lock) is None
     assert capsys.readouterr().err == (
-        "keel-init: the first boot has not finished yet: its own run starts"
-        " at boot and asks its questions on the console, answer them there:"
-        " pct console <ctid> on Proxmox, or lxc-console -n <name> on LXC."
-        " keel-init reconfigures the machine once that run has finished.\n"
+        "keel-init: the first boot has not finished yet: its own run"
+        " (inithooks.service) is starting, and asks its questions on the"
+        " console, answer them there: pct console <ctid> on Proxmox, or"
+        " lxc-console -n <name> on LXC. keel-init reconfigures the machine"
+        " once that run has finished.\n"
     )
+
+
+def test_keel_init_refuses_while_the_boot_run_is_queued(
+    keel_init, lock, stubs, tmp_path, capsys
+):
+    # at boot the unit waits for getty.target with a start job queued
+    unit(stubs, "inactive", jobs="42 inithooks.service start waiting")
+    keel_init.default.write_text("RUN_FIRSTBOOT=true\n")
+    with pytest.raises(SystemExit) as refused:
+        keel_init.main()
+    assert refused.value.code == 75
+    assert "is starting" in capsys.readouterr().err
 
 
 def test_keel_init_runs_once_the_boot_run_has_completed(
@@ -692,12 +798,27 @@ def test_status_before_the_boot_run_of_the_first_boot(
     keel_init, lock, stubs, status_argv, capsys
 ):
     executable(str(stubs / "systemd-detect-virt"), "#!/bin/sh\necho kvm\n")
+    unit(stubs, "active")
     keel_init.default.write_text("RUN_FIRSTBOOT=true\n")
     with pytest.raises(SystemExit) as pending:
         keel_init.main()
     assert pending.value.code == 75
     assert capsys.readouterr().out == (
         "    " + init_lock.pending_message("kvm") + "\n\n"
+    )
+
+
+def test_status_of_a_first_boot_nothing_runs(
+    keel_init, lock, stubs, status_argv, capsys
+):
+    unit(stubs, "failed")
+    keel_init.default.write_text("RUN_FIRSTBOOT=true\n")
+    with pytest.raises(SystemExit) as pending:
+        keel_init.main()
+    assert pending.value.code == 75
+    assert capsys.readouterr().out == (
+        "    the first boot has not finished and nothing is running it:"
+        " run keel-init to run it.\n\n"
     )
 
 
@@ -803,12 +924,17 @@ def boot(keel_init, stubs, tmp_path):
     keel-init's own hooks under tmp_path/lib"""
     for name, body in (
         ("logger", "exit 0"),
-        ("systemctl", "echo running"),
         ("confconsole", "exit 0"),
         ("sleep", "exit 0"),
         ("systemd-detect-virt", "echo lxc"),
     ):
         executable(str(stubs / name), f"#!/bin/sh\n{body}\n")
+    # the unit is starting, unless a test says otherwise
+    unit(stubs, "activating")
+    # keel-init's inithooks_path holds the runner too, as on an appliance
+    lib = tmp_path / "lib"
+    os.symlink(RUN, lib / "run")
+    os.symlink(join(REPO, "lib"), lib / "lib")
     directory = tmp_path / "boot"
     (directory / "firstboot.d").mkdir(parents=True)
     keel_init.default.write_text(
@@ -887,3 +1013,105 @@ def test_keel_init_before_the_boot_run_leaves_the_first_boot_to_it(
 
     keel_init.main()
     assert seen.read_text() == "boot\nkeel-init\n"
+
+
+# a first boot nothing else will run: keel-init runs the boot run itself
+
+
+@pytest.fixture
+def execv(monkeypatch):
+    """os.execv, run as a child instead of replacing the test process; the
+    calls are recorded"""
+    calls = []
+
+    def run_instead(path, argv):
+        calls.append((path, argv))
+        done = subprocess.run(argv, stdin=subprocess.DEVNULL)
+        raise SystemExit(done.returncode)
+
+    monkeypatch.setattr(os, "execv", run_instead)
+    return calls
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        # systemctl stop inithooks
+        "inactive",
+        # the run died: killed, hung up, or failed
+        "failed",
+    ],
+)
+def test_keel_init_runs_the_first_boot_nothing_else_runs(
+    keel_init, lock, boot, stubs, execv, tmp_path, capsys, state
+):
+    unit(stubs, state)
+    seen = tmp_path / "seen"
+    hook(boot, "05autogrow-fs", f"echo boot >> '{seen}'")
+    hook(keel_init.firstboot, "05autogrow-fs", f"echo keel-init >> '{seen}'")
+
+    with pytest.raises(SystemExit) as done:
+        keel_init.main()
+
+    run = str(tmp_path / "lib" / "run")
+    assert done.value.code == 0
+    assert execv == [(run, [run])]
+    # the whole first boot, by the boot run: not keel-init's hooks
+    assert seen.read_text() == "boot\n"
+    assert keel_init.complete.exists()
+    assert capsys.readouterr().err == (
+        "keel-init: the first boot has not finished and inithooks.service"
+        " is not running it (stopped, failed, or skipped by its condition);"
+        f" running the whole first boot here instead: {run}\n"
+    )
+
+
+def test_keel_init_in_a_container_that_skips_the_unit(
+    keel_init, lock, boot, stubs, execv, tmp_path
+):
+    """inithooks.service has ConditionPathExists=!.../lxc: a container
+    with that file skips the unit, which is then inactive with no job,
+    and never runs; nothing but keel-init will do the first boot"""
+    unit(stubs, "inactive", jobs="")
+    seen = tmp_path / "seen"
+    hook(boot, "30rootpass", f"echo boot >> '{seen}'")
+
+    with pytest.raises(SystemExit):
+        keel_init.main()
+
+    assert seen.read_text() == "boot\n"
+    assert init_lock.in_progress(lock) is None
+
+
+def test_keel_init_after_a_killed_boot_run(
+    keel_init, lock, boot, stubs, execv, tmp_path
+):
+    """The boot run killed in its wizard: the kernel drops its lock, the
+    unit is failed, and keel-init redoes the first boot with the runner"""
+    fifo = tmp_path / "answer"
+    os.mkfifo(fifo)
+    seen = tmp_path / "seen"
+    hook(
+        boot,
+        "30rootpass",
+        f"echo boot >> '{seen}'\n"
+        f"[ -e '{tmp_path}/killed' ] || read -r _ < '{fifo}'",
+    )
+    runner = start_run()
+    eventually(lambda: seen.exists())
+    # the hook is killed with its run, as systemd kills the unit's cgroup
+    runner.send_signal(signal.SIGSTOP)
+    subprocess.run(["pkill", "-KILL", "-P", str(runner.pid)])
+    runner.send_signal(signal.SIGKILL)
+    runner.wait(timeout=10)
+    (tmp_path / "killed").touch()
+    unit(stubs, "failed")
+    assert init_lock.in_progress(lock) is None
+    assert not keel_init.complete.exists()
+
+    with pytest.raises(SystemExit) as done:
+        keel_init.main()
+
+    assert done.value.code == 0
+    assert seen.read_text() == "boot\nboot\n"
+    assert keel_init.complete.exists()

@@ -69,9 +69,13 @@ boot run that asks questions waits on the console ("pct console <ctid>" on
 Proxmox, "lxc-console -n <name>" on LXC, or the VM's console), a
 "keel-init" left in the dtach session of the first login is reached with
 "dtach -a" and its socket, and a preseeded run or the everyboot phase only
-has to be waited for. "keel-init" also refuses before the first boot's own
-run has finished (RUN_FIRSTBOOT=true and no /run/inithooks-complete), since
-under "keel-init" the hooks skip what only a first boot does. The login
+has to be waited for. Before the first boot has finished
+(RUN_FIRSTBOOT=true and no /run/inithooks-complete), "keel-init" does not
+run its own hooks, since under "keel-init" the hooks skip what only a first
+boot does: it refuses while inithooks.service is running or queued, and
+when nothing will run the first boot (the unit stopped, failed, or skipped
+by its condition in a container) it runs /usr/lib/inithooks/run itself,
+which does the whole first boot on the operator's terminal. The login
 message says the same, from /etc/update-motd.d/06-keel-init, and "run
 keel-init" while the initialization fence is up and no run is in progress.
 The first boot run itself waits for a "keel-init" that holds the lock.

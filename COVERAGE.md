@@ -4,6 +4,23 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/one-first-boot-run, second review: shell 99.71, Python 99
+
+A pending first boot that nothing runs (the unit stopped, failed, or
+skipped by its container condition) is run by keel-init through the boot
+run instead of being refused; RUN_FIRSTBOOT is read by bash; a relative
+dtach socket is made absolute. `libinithooks/init_lock.py` 173 statements,
+36 branches, 100 percent, from 102 tests in `tests/test_init_lock.py`,
+including a stopped unit, a failed one, a skipped one, and a boot run
+killed in its wizard, each followed by the real `run` doing the first
+boot. Python total 99. Shell unchanged: 198 bats, 99.71. Making keel-init
+refuse in those states again fails four tests.
+
+`tests/test_vocabulary.py` fails two tests locally when a sibling `keel`
+checkout older than keel#48 is found by default (no `ipv6.slaac`); with
+`KEEL_SRC` at current keel main, master and this branch pass. CI skips
+those tests.
+
 ## Branch fix/one-first-boot-run, after review: shell 99.71, Python 99
 
 keel-init refuses before the first boot's own run has finished, the lock

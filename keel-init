@@ -18,8 +18,10 @@ Execute firstboot initialization hooks, skipping blacklist
 
 Refuses, and exits 75, while another first boot run is in progress (the
 one inithooks starts at boot waits on the console): two runs at once would
-configure the machine twice. Refuses the same way before the first boot's
-own run has finished, which does what keel-init skips.
+configure the machine twice. Refuses the same way while the first boot's
+own run (inithooks.service) is starting, since it does what keel-init
+skips; when the first boot is pending and nothing will run it, runs that
+boot run (/usr/lib/inithooks/run) in its place.
 
 firstboot.d hook execution environment:
 
@@ -58,6 +60,8 @@ def usage(e=None):
     print("  -s|--status           - say whether initialization is still pending, and exit:")
     print("                          75 while a run is in progress or the first boot has")
     print("                          not finished, 0 otherwise")
+    print("\nWhen the first boot has not finished and inithooks.service is not running")
+    print("it, the boot run is run here instead of the hooks, with its own output.")
     print("\nBlacklist:\n", file=sys.stderr)
     for script in BLACKLIST:
         print("    %s" % script, file=sys.stderr)
@@ -121,7 +125,10 @@ def status():
         print()
         sys.exit(init_lock.EXIT_BUSY)
     if boot_pending():
-        print("    " + init_lock.pending_message(init_lock.detect_virt()))
+        if init_lock.boot_unit_state() == "stopped":
+            print("    " + init_lock.not_run_message())
+        else:
+            print("    " + init_lock.pending_message(init_lock.detect_virt()))
         print()
         sys.exit(init_lock.EXIT_BUSY)
     if fence_up():
@@ -136,7 +143,9 @@ def refuse(message):
     sys.exit(init_lock.EXIT_BUSY)
 
 
-def take_lock():
+def take_lock(boot_run):
+    """The lock, for keel-init's own hooks; or, while the first boot is
+    pending, a refusal or the boot run BOOT_RUN in keel-init's place"""
     try:
         lock = init_lock.acquire(init_lock.lock_path(),
                                  init_lock.this_keel_init())
@@ -150,10 +159,22 @@ def take_lock():
     # it has run, the first boot is its job: hooks skip what only a first
     # boot does under keel-init (_TURNKEY_INIT), 98finalize would set
     # RUN_FIRSTBOOT=false, and the boot run would then skip the first boot.
-    if boot_pending():
-        init_lock.release(lock)
+    if not boot_pending():
+        return lock
+    state = init_lock.boot_unit_state()
+    init_lock.release(lock)
+    if state != "stopped":
         refuse(init_lock.pending_message(init_lock.detect_virt()))
-    return lock
+    # Nothing will run the first boot: the unit was stopped, the run was
+    # killed, or a container condition skipped the unit, which then never
+    # runs. Refusing would lock the operator out; the boot run itself does
+    # the whole first boot, on this terminal. It takes the lock again, and
+    # a unit started meanwhile waits for it and then finds the first boot
+    # done.
+    print("%s: %s" % (prog(), init_lock.takeover_message(boot_run)),
+          file=sys.stderr)
+    sys.stderr.flush()
+    os.execv(boot_run, [boot_run])
 
 
 def main():
@@ -178,8 +199,8 @@ def main():
     if '-c' in args or '--full-confconsole' in args:
         confconsole = confconsole[:-1]
 
-    lock = take_lock()
     inithooks = InitHooks()
+    lock = take_lock(os.path.join(inithooks.conf.inithooks_path, 'run'))
     inithooks.execute('firstboot.d')
     # confconsole stays open for as long as the operator wants it: the run
     # is over, and the next one must not be refused because of it
