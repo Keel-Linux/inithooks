@@ -140,6 +140,45 @@ class TestNetworkErrors(unittest.TestCase):
             "network.interfaces.eth0.ipv6.mtu: unknown key",
         )
 
+    def test_accepts_slaac_beside_a_static_ipv6_address(self):
+        """Keel-Linux/keel#45, the same rule as the instance tooling"""
+        for value in ("true", "false"):
+            with self.subTest(value=value):
+                self.assertEqual(errors(self.interface(
+                    "      ipv6:\n        method: static\n"
+                    "        address: 2001:db8:1::10/64\n"
+                    f"        slaac: {value}\n")), [])
+
+    def test_rejects_slaac_with_another_method(self):
+        for method in ("auto", "dhcp", "manual", "none"):
+            with self.subTest(method=method):
+                self.assert_one_error(
+                    self.interface(f"      ipv6:\n        method: {method}\n"
+                                   "        slaac: false\n"),
+                    "network.interfaces.eth0.ipv6.slaac: only valid when"
+                    " method is static",
+                )
+
+    def test_rejects_slaac_that_is_not_a_boolean(self):
+        for value in ("0", "'false'", "sometimes"):
+            with self.subTest(value=value):
+                self.assert_one_error(
+                    self.interface(
+                        "      ipv6:\n        method: static\n"
+                        "        address: 2001:db8:1::10/64\n"
+                        f"        slaac: {value}\n"),
+                    "network.interfaces.eth0.ipv6.slaac: must be true or"
+                    " false",
+                )
+
+    def test_rejects_slaac_on_ipv4(self):
+        self.assert_one_error(
+            self.interface("      ipv4:\n        method: static\n"
+                           "        address: 192.0.2.10/24\n"
+                           "        slaac: false\n"),
+            "network.interfaces.eth0.ipv4.slaac: unknown key",
+        )
+
     def test_rejects_family_without_a_method(self):
         self.assert_one_error(
             self.interface("      ipv6:\n        gateway: fe80::1\n"),

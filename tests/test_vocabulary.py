@@ -43,6 +43,7 @@ network:
         method: static
         address: 2001:db8:1::10/64
         gateway: fe80::1
+        slaac: false
   nameservers:
     - 2001:db8:1::53
 tls:

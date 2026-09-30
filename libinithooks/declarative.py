@@ -668,9 +668,12 @@ def _validate_family(key: str, family: Any, version: int) -> list[str]:
         return [error] if error else []
 
     methods = IPV4_METHODS if version == 4 else IPV6_METHODS
+    known = ("method", "address", "gateway") + (
+        ("slaac",) if version == 6 else ()
+    )
     errors = []
     for name in family:
-        if name not in ("method", "address", "gateway"):
+        if name not in known:
             errors.append(f"{key}.{name}: unknown key")
 
     method = family.get("method")
@@ -683,7 +686,22 @@ def _validate_family(key: str, family: Any, version: int) -> list[str]:
         errors.extend(_address_errors(key, str(family["address"]), version))
     if "gateway" in family:
         errors.extend(_gateway_errors(key, str(family["gateway"]), version))
+    if version == 6 and "slaac" in family:
+        errors.extend(_slaac_errors(key, family["slaac"], str(method)))
     return errors
+
+
+def _slaac_errors(key: str, slaac: Any, method: str) -> list[str]:
+    """Whether SLAAC stays beside a static address (Keel-Linux/keel#45)
+
+    The same rule as the instance tooling's validator: a boolean, and only
+    with method static, since auto and dhcp take the advertisements anyway.
+    """
+    if not isinstance(slaac, bool):
+        return [f"{key}.slaac: must be true or false"]
+    if method != "static":
+        return [f"{key}.slaac: only valid when method is static"]
+    return []
 
 
 def _address_errors(key: str, address: str, version: int) -> list[str]:

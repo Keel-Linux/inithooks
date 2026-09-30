@@ -501,11 +501,17 @@ iface eth0 inet6 dhcp
     [ -z "$output" ]
 }
 
+@test "render_slaac6 keeps a VLAN name with a dot as one sysctl component" {
+    run ipconfig_render_slaac6 eth0.45 no
+    [ "$output" = '    pre-up sysctl -q -w net/ipv6/conf/eth0.45/autoconf=0
+    post-down sysctl -q -w net/ipv6/conf/eth0.45/autoconf=1' ]
+}
+
 @test "render_slaac6 turns autoconf off before the address and back on after" {
     run ipconfig_render_slaac6 ens18 no
     [ "$status" -eq 0 ]
-    [ "$output" = '    pre-up sysctl -q -w net.ipv6.conf.ens18.autoconf=0
-    post-down sysctl -q -w net.ipv6.conf.ens18.autoconf=1' ]
+    [ "$output" = '    pre-up sysctl -q -w net/ipv6/conf/ens18/autoconf=0
+    post-down sysctl -q -w net/ipv6/conf/ens18/autoconf=1' ]
 }
 
 @test "render_inet6 takes the config and defaults to dhcp" {
@@ -741,8 +747,8 @@ iface eth0 inet6 static
     address 2001:db8:1::10/64
     gateway fe80::1
     dns-nameservers 2001:db8:1::53
-    pre-up sysctl -q -w net.ipv6.conf.eth0.autoconf=0
-    post-down sysctl -q -w net.ipv6.conf.eth0.autoconf=1' ]
+    pre-up sysctl -q -w net/ipv6/conf/eth0/autoconf=0
+    post-down sysctl -q -w net/ipv6/conf/eth0/autoconf=1' ]
     [ "$(calls ifup)" = '--all --exclude=lo' ]
 }
 
