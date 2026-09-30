@@ -34,4 +34,10 @@ fi
 
 chmod 755 /usr/lib/python3/dist-packages/libinithooks/inithooks_cache.py
 
+# dh_installsystemd enables keel-host-keys.service here (debian/rules says
+# which units it may touch), and dh_python3 byte-compiles the modules. Without
+# this token neither runs: keel-host-keys.service was never enabled, and a
+# machine whose image carries no host key booted an sshd with none.
+#DEBHELPER#
+
 exit 0

@@ -17,6 +17,9 @@ jobs:
     uses: keel-linux/.github/.github/workflows/test-shell.yml@main
     with:
       threshold: 98
+      # tests/test-packaging.bats runs debhelper over debian/ and reads the
+      # maintainer scripts it generates; in CI a missing debhelper fails it
+      apt-packages: debhelper
   python:
     uses: keel-linux/.github/.github/workflows/test-python.yml@main
     with:
