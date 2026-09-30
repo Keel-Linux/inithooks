@@ -37,6 +37,15 @@ if [[ "$IP6_CONFIG" == "static" ]]; then
         || fatal "$error"
 fi
 
+# a static inet6 stanza keeps SLAAC unless IP6_SLAAC=no
+IP6_SLAAC=${IP6_SLAAC:-yes}
+
+ipconfig_valid_slaac "$IP6_SLAAC" \
+    || fatal "Invalid: IP6_SLAAC='$IP6_SLAAC' - valid values: yes|no"
+
+[[ "$IP6_SLAAC" == "yes" || "$IP6_CONFIG" == "static" ]] \
+    || fatal "IP6_SLAAC=no requires IP6_CONFIG=static"
+
 if ! [[ -e $INTERFACES ]]; then
     fatal "$INTERFACES file not found"
 fi
@@ -67,6 +76,7 @@ ipconfig_render_inet6 "$IP_IFACE" "$HOST_NAME" "$IP6_CONFIG" >> "$INTERFACES"
 if [[ "$IP6_CONFIG" == "static" ]]; then
     ipconfig_render_static6 "$IP6_ADDRESS" "$IP6_GW" "$IP6_DNS1" "$IP6_DNS2" \
         >> "$INTERFACES"
+    ipconfig_render_slaac6 "$IP_IFACE" "$IP6_SLAAC" >> "$INTERFACES"
 fi
 
 ifup --all --exclude=lo

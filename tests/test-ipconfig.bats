@@ -448,10 +448,70 @@ iface eth0 inet6 dhcp
     run ipconfig_check_static6 2001:db8:1::10/64 192.0.2.1
     [ "$status" -eq 1 ]
     [ "$output" = "IP6_GW must be IPv6, not IPv4: '192.0.2.1' (IPv4 goes in the IP_* keys)" ]
-    run ipconfig_check_static6 2001:db8:1::10/64 fe80::1 192.0.2.53
-    [ "$output" = "IP6_DNS1 must be IPv6, not IPv4: '192.0.2.53' (IPv4 goes in the IP_* keys)" ]
+    run ipconfig_check_static6 2001:db8:1::10/64 fe80::1 192.0.2.300
+    [ "$status" -eq 1 ]
+    [ "$output" = "IP6_DNS1 is not a valid IPv4 address: '192.0.2.300'" ]
     run ipconfig_check_static6 2001:db8:1::10/64 fe80::1 2001:db8:1::53 2001:db8:2::53/64
     [ "$output" = "IP6_DNS2 must be a plain address, not address/prefix: '2001:db8:2::53/64'" ]
+}
+
+@test "check_static6 accepts an IPv4 nameserver beside an IPv6 one" {
+    run ipconfig_check_static6 2001:db8:1::10/64 fe80::1 2001:db8:1::53 192.0.2.53
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    ipconfig_check_static6 2001:db8:1::10/64 '' 192.0.2.53
+}
+
+@test "ip4_syntax accepts dotted quads and rejects the rest" {
+    ipconfig_ip4_syntax 192.0.2.53
+    ipconfig_ip4_syntax 0.0.0.0
+    ipconfig_ip4_syntax 255.255.255.255
+    run ! ipconfig_ip4_syntax 256.0.2.53
+    run ! ipconfig_ip4_syntax 192.0.2
+    run ! ipconfig_ip4_syntax 192.0.2.53.1
+    run ! ipconfig_ip4_syntax 2001:db8::53
+    run ! ipconfig_ip4_syntax ''
+}
+
+@test "check_dns6 takes either family and names a bad value" {
+    ipconfig_check_dns6 2001:db8:1::53 IP6_DNS1
+    ipconfig_check_dns6 192.0.2.53 IP6_DNS1
+    run ipconfig_check_dns6 192.0.2.999 IP6_DNS2
+    [ "$status" -eq 1 ]
+    [ "$output" = "IP6_DNS2 is not a valid IPv4 address: '192.0.2.999'" ]
+    run ipconfig_check_dns6 ff02::1 IP6_DNS1
+    [ "$status" -eq 1 ]
+    [ "$output" = "IP6_DNS1 must be a unicast address: 'ff02::1'" ]
+}
+
+@test "valid_slaac accepts yes and no only" {
+    ipconfig_valid_slaac yes
+    ipconfig_valid_slaac no
+    run ! ipconfig_valid_slaac ''
+    run ! ipconfig_valid_slaac false
+    run ! ipconfig_valid_slaac NO
+}
+
+@test "render_slaac6 writes nothing when SLAAC stays on" {
+    run ipconfig_render_slaac6 eth0 yes
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run ipconfig_render_slaac6 eth0 ''
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "render_slaac6 keeps a VLAN name with a dot as one sysctl component" {
+    run ipconfig_render_slaac6 eth0.45 no
+    [ "$output" = '    pre-up sysctl -q -w net/ipv6/conf/eth0.45/autoconf=0
+    post-down sysctl -q -w net/ipv6/conf/eth0.45/autoconf=1' ]
+}
+
+@test "render_slaac6 turns autoconf off before the address and back on after" {
+    run ipconfig_render_slaac6 ens18 no
+    [ "$status" -eq 0 ]
+    [ "$output" = '    pre-up sysctl -q -w net/ipv6/conf/ens18/autoconf=0
+    post-down sysctl -q -w net/ipv6/conf/ens18/autoconf=1' ]
 }
 
 @test "render_inet6 takes the config and defaults to dhcp" {
@@ -635,18 +695,82 @@ iface eth0 inet6 static
     [ -z "$(calls ip)" ]
 }
 
-@test "hook IP6 static with an IPv4 gateway or nameserver is fatal" {
+@test "hook IP6 static with an IPv4 gateway or a bad nameserver is fatal" {
     preseed 'IP_CONFIG=dhcp' 'IP6_CONFIG=static' 'IP6_ADDRESS=2001:db8:1::10/64' \
         'IP6_GW=192.0.2.1'
     run "$HOOK"
     [ "$status" -eq 1 ]
     [ "$output" = "fatal IP6_GW must be IPv6, not IPv4: '192.0.2.1' (IPv4 goes in the IP_* keys)" ]
     preseed 'IP_CONFIG=dhcp' 'IP6_CONFIG=static' 'IP6_ADDRESS=2001:db8:1::10/64' \
-        'IP6_DNS2=192.0.2.53'
+        'IP6_DNS2=192.0.2.530'
     run "$HOOK"
     [ "$status" -eq 1 ]
-    [ "$output" = "fatal IP6_DNS2 must be IPv6, not IPv4: '192.0.2.53' (IPv4 goes in the IP_* keys)" ]
+    [ "$output" = "fatal IP6_DNS2 is not a valid IPv4 address: '192.0.2.530'" ]
     [ "$(cat "$INTERFACES")" = "$STOCK_INTERFACES" ]
+}
+
+@test "hook IP6 static carries the IPv4 nameservers of an IPv4 on dhcp" {
+    preseed 'IP_CONFIG=dhcp' 'IP6_CONFIG=static' 'IP6_ADDRESS=2001:db8:1::10/64' \
+        'IP6_DNS1=2001:db8:1::53' 'IP6_DNS2=192.0.2.53'
+    run "$HOOK"
+    [ "$status" -eq 0 ]
+    [ "$(tail -4 "$INTERFACES")" = 'iface eth0 inet6 static
+    hostname tkldev
+    address 2001:db8:1::10/64
+    dns-nameservers 2001:db8:1::53 192.0.2.53' ]
+}
+
+@test "hook IP6 static keeps SLAAC unless IP6_SLAAC=no" {
+    preseed 'IP_CONFIG=dhcp' 'IP6_CONFIG=static' 'IP6_ADDRESS=2001:db8:1::10/64' \
+        'IP6_SLAAC=yes'
+    run "$HOOK"
+    [ "$status" -eq 0 ]
+    run ! grep -q 'autoconf' "$INTERFACES"
+}
+
+@test "hook IP6 static with IP6_SLAAC=no turns autoconf off in the inet6 stanza" {
+    preseed 'IP_CONFIG=dhcp' 'IP6_CONFIG=static' 'IP6_ADDRESS=2001:db8:1::10/64' \
+        'IP6_GW=fe80::1' 'IP6_DNS1=2001:db8:1::53' 'IP6_SLAAC=no'
+    run "$HOOK"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$INTERFACES")" = '# UNCONFIGURED INTERFACES
+# remove the above line if you edit this file
+
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+    hostname tkldev
+iface eth0 inet6 static
+    hostname tkldev
+    address 2001:db8:1::10/64
+    gateway fe80::1
+    dns-nameservers 2001:db8:1::53
+    pre-up sysctl -q -w net/ipv6/conf/eth0/autoconf=0
+    post-down sysctl -q -w net/ipv6/conf/eth0/autoconf=1' ]
+    [ "$(calls ifup)" = '--all --exclude=lo' ]
+}
+
+@test "hook is fatal on an invalid IP6_SLAAC before touching anything" {
+    preseed 'IP_CONFIG=dhcp' 'IP6_CONFIG=static' 'IP6_ADDRESS=2001:db8:1::10/64' \
+        'IP6_SLAAC=false'
+    run "$HOOK"
+    [ "$status" -eq 1 ]
+    [ "$output" = "fatal Invalid: IP6_SLAAC='false' - valid values: yes|no" ]
+    [ "$(cat "$INTERFACES")" = "$STOCK_INTERFACES" ]
+    [ -z "$(calls ip)" ]
+}
+
+@test "hook IP6_SLAAC=no without a static inet6 stanza is fatal" {
+    for config in dhcp manual ''; do
+        preseed 'IP_CONFIG=dhcp' "IP6_CONFIG=$config" 'IP6_SLAAC=no'
+        run "$HOOK"
+        [ "$status" -eq 1 ]
+        [ "$output" = 'fatal IP6_SLAAC=no requires IP6_CONFIG=static' ]
+    done
+    [ "$(cat "$INTERFACES")" = "$STOCK_INTERFACES" ]
+    [ -z "$(calls ip)" ]
 }
 
 @test "hook IP6 static without a prefix length is fatal" {

@@ -4,6 +4,26 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch feat/static-ipv6-slaac: shell 99.69 percent (2026-09-30)
+
+`lib/ipconfig.sh` gains `ipconfig_render_slaac6`, `ipconfig_valid_slaac`,
+`ipconfig_ip4_syntax` and `ipconfig_check_dns6`, and `01ipconfig` reads
+`IP6_SLAAC` (Keel-Linux/keel#45). `tests/test-ipconfig.bats` grows from 64
+to 75 tests (171 bats in all): the rendering of both values, the validation,
+the fatal paths before anything is touched, the full file with
+`IP6_SLAAC=no`, and an IPv4 resolver in a static inet6 stanza.
+
+Measured with kcov 43: `firstboot.d/01ipconfig` 33/33, `lib/ipconfig.sh`
+84/84, `lib/init-fence.sh` 83/84 (98.81, the same line as before), total
+99.69. The shell gate stays at 98.
+
+After review: the sysctl key is written with slashes so a VLAN name stays
+one component (one more bats test, 76 in the file, 172 in all; the same
+line counts), and `libinithooks/declarative.py` accepts `ipv6.slaac`
+(`tests/test_declarative_network.py`, four tests; `FULL` in
+`tests/test_vocabulary.py` uses it, and both readers accept it with
+`KEEL_SRC` set). Python 203 passed, 99 percent.
+
 ## Branch fix/fence-no-silent-skip: shell 99.57 percent (2026-09-28)
 
 `lib/init-fence.sh` gains `fence_close_port` and `fence_open_port`, and
