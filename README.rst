@@ -550,6 +550,7 @@ Common to all appliances::
                             IP_ADDRESS, IP_NETMASK, IP_GW, IP_DNS1, IP_DNS2
                             IP6_CONFIG              [ dhcp | static | manual ]
                             IP6_ADDRESS, IP6_GW, IP6_DNS1, IP6_DNS2
+                            IP6_SLAAC               [ yes | no ]
     15regen-sslcert         DH_BITS                 [ 1024 | 2048 | 4096 ]
     29preseed               INITFENCE               [ SKIP ]
     30rootpass*             ROOT_PASS
@@ -572,10 +573,20 @@ Notes:
       IPv6 on SLAAC or DHCPv6 as the image ships it. With static,
       IP6_ADDRESS is required and carries the prefix length; IP6_GW is
       optional (a link-local gateway such as fe80::1 is accepted); IP6_DNS1
-      and IP6_DNS2 are optional resolvers. Every IP6_* value must be an
-      IPv6 address: an IPv4 address, a missing prefix length, a multicast
-      or loopback address is a fatal error and nothing is written. When
-      only IP6_* keys are set, IPv4 stays on dhcp.
+      and IP6_DNS2 are optional resolvers. The address and the gateway must
+      be IPv6: an IPv4 address, a missing prefix length, a multicast or
+      loopback address is a fatal error and nothing is written. A resolver
+      may be of either family, since resolvconf takes dns-nameservers from
+      any stanza: with IPv4 on dhcp, the inet6 stanza is where its
+      resolvers can be written. When only IP6_* keys are set, IPv4 stays on
+      dhcp.
+
+      A static inet6 stanza keeps SLAAC, so the interface also takes an
+      address from the router's advertisements. IP6_SLAAC=no (default yes)
+      makes the static address the only one: the stanza turns autoconf off
+      on the interface before the address is added (pre-up) and back on
+      when it goes down (post-down). accept_ra stays on, so the router's
+      routes are kept. IP6_SLAAC=no requires IP6_CONFIG=static.
 
       A static IPv6 address with IPv4 left on dhcp::
 
@@ -585,6 +596,7 @@ Notes:
           export IP6_GW=fe80::1
           export IP6_DNS1=2001:db8:1::53
           export IP6_DNS2=2001:db8:2::53
+          export IP6_SLAAC=no
           EOF
 
       Static addresses on both families::
