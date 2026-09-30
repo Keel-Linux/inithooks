@@ -3,7 +3,11 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-include = ["libinithooks/declarative.py", "bin/declarative.py"]
+include = [
+    "libinithooks/declarative.py",
+    "libinithooks/init_lock.py",
+    "bin/declarative.py",
+]
 # The reusable workflow runs coverage with --source=libinithooks,bin, and
 # coverage.py ignores "include" when a source is given, so the inherited
 # modules that have no tests yet are omitted here as well. Each entry goes

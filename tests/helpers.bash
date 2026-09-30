@@ -42,3 +42,25 @@ else
     exec /usr/bin/head \"\$@\"
 fi"
 }
+
+# eventually CMD...
+# Runs CMD until it succeeds, for at most 10 seconds, then fails saying so:
+# a test waiting on another process must not hang when that process never
+# gets there. No sleep between tries, since sleep is a stub in some tests.
+eventually() {
+    local deadline=$((SECONDS + 10))
+    until "$@"; do
+        if (( SECONDS >= deadline )); then
+            echo "timed out waiting for: $*" >&2
+            return 1
+        fi
+    done
+}
+
+# let_go FIFO
+# Lets go of a process still blocked reading FIFO, if a failed test left one,
+# so that it does not keep a lock or the test's output open. Never blocks.
+let_go() {
+    [[ -p "$1" ]] || return 0
+    timeout 2 bash -c ": > '$1'" 2>/dev/null || true
+}

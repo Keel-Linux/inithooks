@@ -1,0 +1,169 @@
+#!/usr/bin/python3
+#
+# Copyright (c) 2012-2015 Alon Swartz <alon@turnkeylinux.org>
+# Copyright (c) 2016-2019 TurnKey GNU/Linux https://www.turnkeylinux.org
+#
+# This file is part of InitHooks.
+#
+# InitHooks is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# keel-init is the command; turnkey-init is a relative link to it, kept so
+# that TurnKey's documentation and existing scripts keep working (Keel
+# handbook decision 0015). Messages name the command that was typed.
+"""
+Execute firstboot initialization hooks, skipping blacklist
+
+Refuses, and exits 75, while another first boot run is in progress (the
+one inithooks starts at boot waits on the console): two runs at once would
+configure the machine twice.
+
+firstboot.d hook execution environment:
+
+    _TURNKEY_INIT=1
+
+"""
+import os
+import sys
+
+from conffile import ConfFile
+import subprocess
+
+from libinithooks import init_lock
+
+
+def prog():
+    return os.path.basename(sys.argv[0])
+
+
+def fatal(e):
+    print("%s: error: %s" % (prog(), e), file=sys.stderr)
+    sys.exit(1)
+
+
+def usage(e=None):
+    if e:
+        print("error: " + str(e), file=sys.stderr)
+
+    print("Syntax: %s [-h|--help] [-c|--full-confconsole] [-s|--status]\n"
+          % prog(), file=sys.stderr)
+    print(__doc__.strip(), file=sys.stderr)
+    print("\nOptions:\n")
+    print("  -h|--help             - print this help and exit")
+    print("  -c|--full-confconsole - after initialization open full confconsole (default is basic).")
+    print("                          If Confconsole not installed, will be ignored.")
+    print("  -s|--status           - say whether initialization is still pending, and exit:")
+    print("                          75 while a run is in progress, 0 otherwise")
+    print("\nBlacklist:\n", file=sys.stderr)
+    for script in BLACKLIST:
+        print("    %s" % script, file=sys.stderr)
+    sys.exit(1)
+
+
+# deprecated: hooks can use _TURNKEY_INIT to detect if they're running under
+# keel-init
+BLACKLIST = ['15regen-sslcert',
+             '92etckeeper', ]
+
+
+class Config(ConfFile):
+    CONF_FILE = "/etc/default/inithooks"
+
+
+class InitHooks:
+    def __init__(self):
+        self.conf = Config()
+
+    @staticmethod
+    def _exec(cmd):
+        subprocess.run(['env',
+                        'PATH=/usr/local/sbin:/usr/local/bin:'
+                        '/usr/sbin:/usr/bin:/sbin:/bin',
+                        cmd])
+
+    def execute(self, dname):
+        os.environ['_TURNKEY_INIT'] = '1'
+        dpath = os.path.join(self.conf.inithooks_path, dname)
+        if not os.path.exists(dpath):
+            return
+
+        scripts = os.listdir(dpath)
+        scripts.sort()
+        for fname in scripts:
+            fpath = os.path.join(dpath, fname)
+            if os.access(fpath, os.X_OK) and fname not in BLACKLIST:
+                self._exec(fpath)
+
+
+def fence_up():
+    try:
+        done = subprocess.run(['systemctl', 'is-active', '--quiet',
+                               'turnkey-init-fence'])
+    except OSError:
+        return False
+    return done.returncode == 0
+
+
+def status():
+    """What the login message says while initialization is pending"""
+    run = init_lock.in_progress(init_lock.lock_path())
+    if run:
+        print("    " + init_lock.wait_message(run, init_lock.detect_virt()))
+        print()
+        sys.exit(init_lock.EXIT_BUSY)
+    if fence_up():
+        print("    This system is not initialized yet: run keel-init to"
+              " set it up.")
+        print()
+    sys.exit(0)
+
+
+def take_lock():
+    try:
+        return init_lock.acquire(init_lock.lock_path())
+    except init_lock.Busy as busy:
+        virt = init_lock.detect_virt()
+        print("%s: %s" % (prog(), init_lock.wait_message(busy.run, virt)),
+              file=sys.stderr)
+        print("%s: two runs at once would configure this machine twice;"
+              " run %s again once that one has finished." % (prog(), prog()),
+              file=sys.stderr)
+        sys.exit(init_lock.EXIT_BUSY)
+
+
+def main():
+    args = sys.argv[1:]
+    # neither needs root: the login message asks for the status, and the
+    # lock file is readable by anybody
+    if '-h' in args or '--help' in args:
+        usage()
+    if '-s' in args or '--status' in args:
+        status()
+
+    if os.geteuid() != 0:
+        fatal("%s must be run with root permissions" % prog())
+
+    confconsole = '/usr/bin/confconsole'
+    if os.path.exists(confconsole) and os.access(confconsole, os.X_OK):
+        confconsole = [confconsole, '--usage']
+    else:
+        # /bin/true ignores args and always returns true
+        confconsole = ['/bin/true', '--null']
+
+    if '-c' in args or '--full-confconsole' in args:
+        confconsole = confconsole[:-1]
+
+    lock = take_lock()
+    inithooks = InitHooks()
+    inithooks.execute('firstboot.d')
+    # confconsole stays open for as long as the operator wants it: the run
+    # is over, and the next one must not be refused because of it
+    init_lock.release(lock)
+
+    subprocess.run(confconsole)
+
+
+if __name__ == "__main__":
+    main()

@@ -5,9 +5,11 @@ everyboot.d/*                           /usr/lib/inithooks/everyboot.d
 lib/*                                   /usr/lib/inithooks/lib
 run                                     /usr/lib/inithooks
 rsyslog.d/*                             /etc/rsyslog.d
+update-motd.d/*                         /etc/update-motd.d
 
 turnkey-init-fence/htdocs               /usr/lib/inithooks/turnkey-init-fence
 
+keel-init                               /usr/sbin
 turnkey-init                            /usr/sbin
 turnkey-sudoadmin                       /usr/sbin
 turnkey-install-security-updates        /usr/sbin

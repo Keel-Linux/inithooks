@@ -1,3 +1,28 @@
+inithooks (2.3.6+keel10) trixie; urgency=medium
+
+  * One first boot run at a time (Keel-Linux/inithooks#24). The boot run
+    and keel-init both hold an flock on /run/inithooks.lock for as long as
+    hooks run. keel-init refuses, with exit status 75, while another run
+    holds it, and says where that run waits: pct console <ctid> on
+    Proxmox, lxc-console -n <name> on LXC, or the VM's console. A
+    turnkey-init typed in a second shell had started a second run of the
+    same hooks, which set the root password and hung in the next dialog
+    while the boot run still waited on the console. The kernel drops the
+    lock when a run exits however it exits; hooks are not given its
+    descriptor, and it is released before confconsole starts.
+  * run: waits for a keel-init that holds the lock, then reads
+    RUN_FIRSTBOOT, so the firstboot scripts are not run again after a
+    keel-init completed them.
+  * /etc/update-motd.d/06-keel-init: the login message says where the
+    first boot wizard waits while it runs, and to run keel-init while the
+    init fence is up and no run is in progress (keel-init --status).
+  * keel-init is the command, and turnkey-init a relative link to it,
+    both in /usr/sbin (Keel-Linux/inithooks#22, handbook decision 0015).
+    Help and messages name the command that was typed; the README and the
+    init fence page name keel-init. --help needs no root.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Wed, 30 Sep 2026 04:27:38 +0000
+
 inithooks (2.3.6+keel9) trixie; urgency=medium
 
   * 01ipconfig: a new key, IP6_SLAAC (yes or no, default yes). A static

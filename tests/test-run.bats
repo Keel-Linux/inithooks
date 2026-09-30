@@ -10,9 +10,15 @@ bats_require_minimum_version 1.5.0
 
 load helpers
 
+# sleep is a stub in these tests; a daemon a hook leaves behind needs the
+# real one
+REAL_SLEEP=$(command -v sleep)
+
 setup() {
     setup_stubs
     ROOT=$BATS_TEST_TMPDIR
+    export INITHOOKS_LOCK=$ROOT/inithooks.lock
+    FIFO=$ROOT/release
     CONF=$ROOT/inithooks.conf
     LIB=$ROOT/lib
     SEEN=$ROOT/seen
@@ -43,6 +49,10 @@ printf '%s\n' "\$INITHOOKS_CONF" >> '$SEEN'
 $body
 EOF
     chmod +x "$LIB/firstboot.d/$name"
+}
+
+teardown() {
+    let_go "$FIFO"
 }
 
 run_runner() {
@@ -129,5 +139,86 @@ EOF
     run_runner
 
     [ "$status" -eq 0 ]
+    [ ! -e "$SEEN" ]
+}
+
+# The first boot lock (Keel-Linux/inithooks#24): lib/init-lock.sh has the
+# functions, these tests what run does with them.
+
+@test "the lock is held while a hook runs" {
+    probe 01probe "flock -n '$INITHOOKS_LOCK' true || echo held >> '$SEEN'"
+
+    run_runner
+
+    [ "$status" -eq 0 ]
+    [ "$(tail -1 "$SEEN")" = held ]
+}
+
+@test "a hook is not given the lock's descriptor" {
+    probe 01probe "ls -l /proc/\$\$/fd > '$ROOT/fds'"
+
+    run_runner
+
+    [ "$status" -eq 0 ]
+    [ -s "$ROOT/fds" ]
+    run ! grep -q "$INITHOOKS_LOCK" "$ROOT/fds"
+}
+
+@test "the lock is released before confconsole starts" {
+    stub confconsole "flock -n '$INITHOOKS_LOCK' true && echo free >> '$SEEN'"
+
+    run_runner
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SEEN")" = free ]
+}
+
+@test "a daemon a hook leaves behind does not keep the lock" {
+    probe 01daemon "'$REAL_SLEEP' 30 > /dev/null 2>&1 &
+echo \$! > '$ROOT/daemon'"
+
+    run_runner
+    local daemon
+    daemon=$(cat "$ROOT/daemon")
+
+    [ "$status" -eq 0 ]
+    kill -0 "$daemon"
+    flock -n "$INITHOOKS_LOCK" true
+    kill "$daemon"
+}
+
+@test "run waits for a run in progress and reads the RUN_FIRSTBOOT it left" {
+    probe 01probe
+    mkfifo "$FIFO"
+    # a keel-init that finishes the first boot: 98finalize sets the flag
+    flock "$INITHOOKS_LOCK" -c "read -r _ < '$FIFO'
+sed -i 's/RUN_FIRSTBOOT=true/RUN_FIRSTBOOT=false/' '$DEFAULT'" &
+    local holder=$!
+    eventually bash -c "! flock -n '$INITHOOKS_LOCK' true"
+    INITHOOKS_DEFAULT=$DEFAULT "$BATS_TEST_DIRNAME/../run" \
+        > "$ROOT/out" 2> "$ROOT/err" &
+    local runner=$!
+    # waiting and not finished: a run that did not wait would be done, or
+    # would never print this
+    eventually grep -q waiting "$ROOT/err"
+    kill -0 "$runner"
+
+    echo go > "$FIFO"
+    wait "$holder"
+    wait "$runner"
+
+    # the firstboot hook did not run a second time; the runner did finish
+    [ ! -e "$SEEN" ]
+    grep -q 'Inithooks run completed' "$ROOT/inithooks.log"
+}
+
+@test "run fails, running nothing, when the lock cannot be opened" {
+    probe 01probe
+    export INITHOOKS_LOCK=$ROOT/no/such/dir/lock
+
+    run_runner
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"cannot open the first boot lock"* ]]
     [ ! -e "$SEEN" ]
 }
