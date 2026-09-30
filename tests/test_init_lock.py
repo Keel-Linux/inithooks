@@ -11,6 +11,7 @@ turnkey-pylib on an appliance, replaced by a stub that reads
 INITHOOKS_PATH from the test.
 """
 
+import fcntl
 import importlib.machinery
 import importlib.util
 import os
@@ -18,6 +19,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 import types
 from os.path import abspath, dirname, join
@@ -77,7 +79,14 @@ def stubs(tmp_path, monkeypatch):
 
 @pytest.fixture
 def keel_init(tmp_path, monkeypatch):
-    """The keel-init module, run as root, with hooks under tmp_path/lib"""
+    """The keel-init module, run as root, with hooks under tmp_path/lib,
+    on a machine whose first boot is done (module.default holds
+    RUN_FIRSTBOOT, module.complete is run's marker, absent)"""
+    default = tmp_path / "default-inithooks"
+    default.write_text("RUN_FIRSTBOOT=false\n")
+    complete = tmp_path / "inithooks-complete"
+    monkeypatch.setenv("INITHOOKS_DEFAULT", str(default))
+    monkeypatch.setenv("INITHOOKS_COMPLETE", str(complete))
     stub = types.ModuleType("conffile")
     exec(CONFFILE_STUB, stub.__dict__)
     monkeypatch.setitem(sys.modules, "conffile", stub)
@@ -91,6 +100,8 @@ def keel_init(tmp_path, monkeypatch):
     monkeypatch.setattr(module.os, "geteuid", lambda: 0)
     monkeypatch.setattr(sys, "argv", ["keel-init"])
     module.firstboot = firstboot
+    module.default = default
+    module.complete = complete
     return module
 
 
@@ -110,23 +121,86 @@ def test_lock_path_from_environment(lock):
     assert init_lock.lock_path() == lock
 
 
+def read_lock(path):
+    with open(path) as fob:
+        return init_lock.parse(fob.read())
+
+
 def test_acquire_writes_the_pid_and_holds(lock):
     fd = init_lock.acquire(lock)
     try:
-        with open(lock) as fob:
-            assert fob.read() == f"{os.getpid()}\n"
+        assert read_lock(lock) == init_lock.Run(os.getpid())
         assert init_lock.in_progress(lock) == init_lock.Run(os.getpid())
     finally:
         init_lock.release(fd)
 
 
-def test_acquire_replaces_a_longer_stale_pid(lock):
+def test_acquire_describes_the_holder(lock):
+    holder = init_lock.Run(
+        pid=4242, kind="keel-init", tty="/dev/pts/3", dtach="/root/.d"
+    )
+    fd = init_lock.acquire(lock, holder)
+    try:
+        assert init_lock.in_progress(lock) == holder
+    finally:
+        init_lock.release(fd)
+
+
+def test_acquire_replaces_a_longer_stale_description(lock):
     with open(lock, "w") as fob:
-        fob.write("123456789\n")
+        fob.write("kind=run\npid=123456789\nhook=30rootpass\n" * 20)
     fd = init_lock.acquire(lock)
     init_lock.release(fd)
-    with open(lock) as fob:
-        assert fob.read() == f"{os.getpid()}\n"
+    assert read_lock(lock) == init_lock.Run(os.getpid())
+
+
+def test_acquire_tries_again_while_a_probe_holds_the_lock(lock):
+    # the login message's probe holds a shared lock for an instant
+    probe = os.open(lock, os.O_RDONLY | os.O_CREAT)
+    fcntl.flock(probe, fcntl.LOCK_SH)
+    timer = threading.Timer(0.1, os.close, [probe])
+    timer.start()
+    try:
+        fd = init_lock.acquire(lock, attempts=100, interval=0.01)
+        init_lock.release(fd)
+    finally:
+        timer.join()
+
+
+def test_acquire_tries_at_least_once(lock):
+    init_lock.release(init_lock.acquire(lock, attempts=0))
+    fd = init_lock.acquire(lock)
+    try:
+        with pytest.raises(init_lock.Busy):
+            init_lock.acquire(lock, attempts=0)
+    finally:
+        init_lock.release(fd)
+
+
+def test_parse_and_describe_agree():
+    run = init_lock.Run(
+        pid=260,
+        kind="run",
+        tty="/dev/tty1",
+        phase="firstboot",
+        hook="30rootpass",
+        preseeded=True,
+    )
+    assert init_lock.parse(init_lock.describe(run)) == run
+
+
+@pytest.mark.parametrize(
+    "text, run",
+    [
+        ("", init_lock.Run(None)),
+        ("260\n", init_lock.Run(None)),
+        ("pid=abc\nkind=run\n", init_lock.Run(None, kind="run")),
+        ("pid=7\npreseeded=\n", init_lock.Run(7)),
+        (" pid = 7 \nnoise\n", init_lock.Run(7)),
+    ],
+)
+def test_parse_what_the_file_may_hold(text, run):
+    assert init_lock.parse(text) == run
 
 
 def test_acquire_refuses_while_held_and_names_the_holder(lock):
@@ -254,6 +328,191 @@ def test_wait_message_without_a_pid_on_bare_metal():
     )
 
 
+def test_wait_message_of_the_boot_wizard_names_its_tty_and_hook():
+    run = init_lock.Run(
+        260, kind="run", tty="/dev/pts/1", phase="firstboot", hook="30rootpass"
+    )
+    assert init_lock.wait_message(run, "lxc") == (
+        "the first-boot wizard is running on the console"
+        " (pid 260, on /dev/pts/1, in 30rootpass); answer it there:"
+        " pct console <ctid> on Proxmox, or lxc-console -n <name> on LXC."
+    )
+
+
+def test_wait_message_of_a_preseeded_boot_run():
+    run = init_lock.Run(
+        260, kind="run", phase="firstboot", hook="95secupdates", preseeded=True
+    )
+    assert init_lock.wait_message(run, "lxc") == (
+        "the first boot is running from its preseed"
+        " (pid 260, in 95secupdates); nothing waits for an answer,"
+        " wait for it to finish."
+    )
+
+
+def test_wait_message_of_the_everyboot_phase():
+    run = init_lock.Run(
+        260, kind="run", tty="/dev/tty1", phase="everyboot", hook="01empty"
+    )
+    assert init_lock.wait_message(run, "kvm") == (
+        "the boot run is running its everyboot hooks"
+        " (pid 260, on /dev/tty1, in 01empty); nothing waits for an answer,"
+        " wait for it to finish."
+    )
+
+
+def test_wait_message_of_a_keel_init_in_dtach():
+    run = init_lock.Run(
+        900,
+        kind="keel-init",
+        tty="/dev/pts/4",
+        dtach="/root/.inithooks.dtach",
+    )
+    assert init_lock.wait_message(run, "lxc") == (
+        "keel-init is already running (pid 900) in the dtach session"
+        " /root/.inithooks.dtach; attach to it with:"
+        " dtach -a /root/.inithooks.dtach"
+    )
+
+
+def test_wait_message_of_a_keel_init_on_a_terminal():
+    run = init_lock.Run(900, kind="keel-init", tty="/dev/pts/2")
+    assert init_lock.wait_message(run, "lxc") == (
+        "keel-init is already running (pid 900) on /dev/pts/2;"
+        " answer it there, or wait for it to finish."
+    )
+
+
+def test_wait_message_of_a_keel_init_without_a_terminal():
+    run = init_lock.Run(None, kind="keel-init")
+    assert init_lock.wait_message(run, "lxc") == (
+        "keel-init is already running; wait for it to finish."
+    )
+
+
+def test_pending_message():
+    assert init_lock.pending_message("kvm") == (
+        "the first boot has not finished yet: its own run starts at boot"
+        " and asks its questions on the console, answer them there:"
+        " the VM's console. keel-init reconfigures the machine once that"
+        " run has finished."
+    )
+
+
+@pytest.mark.parametrize(
+    "text, pending",
+    [
+        ("RUN_FIRSTBOOT=true\n", True),
+        ("RUN_FIRSTBOOT=TRUE\n", True),
+        ('RUN_FIRSTBOOT="true"\n', True),
+        ("  RUN_FIRSTBOOT=true  \n", True),
+        ("RUN_FIRSTBOOT=false\n", False),
+        ("RUN_FIRSTBOOT=true\nRUN_FIRSTBOOT=false\n", False),
+        ("#RUN_FIRSTBOOT=true\n", False),
+        ("INITHOOKS_PATH=/usr/lib/inithooks\n", False),
+    ],
+)
+def test_boot_pending_reads_run_firstboot(tmp_path, text, pending):
+    default = tmp_path / "default"
+    default.write_text(text)
+    complete = str(tmp_path / "complete")
+    assert init_lock.boot_pending(str(default), complete) is pending
+
+
+def test_boot_pending_ends_when_the_boot_run_completes(tmp_path):
+    default = tmp_path / "default"
+    default.write_text("RUN_FIRSTBOOT=true\n")
+    complete = tmp_path / "complete"
+    complete.touch()
+    assert init_lock.boot_pending(str(default), str(complete)) is False
+
+
+def test_boot_pending_without_a_default_file(tmp_path):
+    missing = str(tmp_path / "missing")
+    assert init_lock.boot_pending(missing, missing) is False
+
+
+def test_boot_paths(monkeypatch):
+    monkeypatch.delenv("INITHOOKS_DEFAULT", raising=False)
+    monkeypatch.delenv("INITHOOKS_COMPLETE", raising=False)
+    assert init_lock.default_path() == "/etc/default/inithooks"
+    assert init_lock.complete_path() == "/run/inithooks-complete"
+    monkeypatch.setenv("INITHOOKS_DEFAULT", "/d")
+    monkeypatch.setenv("INITHOOKS_COMPLETE", "/c")
+    assert init_lock.default_path() == "/d"
+    assert init_lock.complete_path() == "/c"
+
+
+def fake_process(proc, pid, ppid, argv, name="cmd"):
+    directory = proc / str(pid)
+    directory.mkdir(parents=True)
+    (directory / "stat").write_text(f"{pid} ({name}) S {ppid} {pid} 0 0\n")
+    (directory / "cmdline").write_bytes("\0".join(argv).encode() + b"\0")
+
+
+def test_dtach_socket_of_a_keel_init_started_by_the_profile(tmp_path):
+    # common's .profile.d: dtach -A SOCKET -Ez /bin/bash -c "turnkey-init"
+    proc = tmp_path / "proc"
+    socket = "/root/.inithooks.dtach"
+    fake_process(
+        proc,
+        40,
+        1,
+        ["/usr/bin/dtach", "-A", socket, "-Ez", "/bin/bash", "-c", "x"],
+    )
+    fake_process(proc, 50, 40, ["/bin/bash", "-c", "turnkey-init"],
+                 name="odd ) name")
+    fake_process(proc, 60, 50, ["/usr/bin/python3", "/usr/sbin/turnkey-init"])
+    assert init_lock.dtach_socket(60, str(proc)) == "/root/.inithooks.dtach"
+
+
+def test_dtach_socket_outside_dtach(tmp_path):
+    proc = tmp_path / "proc"
+    fake_process(proc, 50, 1, ["/bin/bash"])
+    fake_process(proc, 60, 50, ["/usr/sbin/keel-init"])
+    assert init_lock.dtach_socket(60, str(proc)) == ""
+
+
+def test_dtach_socket_ignores_a_dtach_that_only_attaches(tmp_path):
+    proc = tmp_path / "proc"
+    fake_process(proc, 50, 1, ["dtach", "-a", "/root/.inithooks.dtach"])
+    fake_process(proc, 60, 50, ["keel-init"])
+    assert init_lock.dtach_socket(60, str(proc)) == ""
+
+
+def test_dtach_socket_of_a_vanished_process(tmp_path):
+    assert init_lock.dtach_socket(60, str(tmp_path)) == ""
+
+
+def test_dtach_socket_gives_up_on_a_deep_tree(tmp_path):
+    proc = tmp_path / "proc"
+    depth = init_lock.DTACH_DEPTH + 2
+    for pid in range(2, depth + 2):
+        fake_process(proc, pid, pid - 1 if pid > 2 else 1, ["sh"])
+    # the dtach is above the depth looked at
+    assert init_lock.dtach_socket(depth + 1, str(proc)) == ""
+
+
+def test_this_keel_init_describes_itself():
+    run = init_lock.this_keel_init()
+    assert run.kind == "keel-init"
+    assert run.pid == os.getpid()
+    assert run.dtach == ""
+
+
+def test_current_tty_without_a_terminal(monkeypatch):
+    def not_a_tty(fd):
+        raise OSError("not a tty")
+
+    monkeypatch.setattr(init_lock.os, "ttyname", not_a_tty)
+    assert init_lock.current_tty() == ""
+
+
+def test_current_tty_on_a_terminal(monkeypatch):
+    monkeypatch.setattr(init_lock.os, "ttyname", lambda fd: "/dev/pts/7")
+    assert init_lock.current_tty() == "/dev/pts/7"
+
+
 # keel-init
 
 
@@ -267,6 +526,54 @@ def test_keel_init_runs_the_hooks_holding_the_lock(keel_init, lock, tmp_path):
     keel_init.main()
     assert seen.read_text() == "held\n"
     assert init_lock.in_progress(lock) is None
+
+
+def test_keel_init_describes_itself_in_the_lock(keel_init, lock, tmp_path):
+    seen = tmp_path / "seen"
+    hook(keel_init.firstboot, "01probe", f"cat '{lock}' > '{seen}'")
+    keel_init.main()
+    run = init_lock.parse(seen.read_text())
+    assert run.kind == "keel-init"
+    assert run.pid == os.getpid()
+
+
+def test_keel_init_refuses_before_the_boot_run_of_the_first_boot(
+    keel_init, lock, stubs, tmp_path, capsys
+):
+    """The race: keel-init typed after `pct enter` before inithooks.service
+    has started. Under keel-init the hooks skip what only a first boot
+    does, and the boot run would then find the first boot done."""
+    executable(str(stubs / "systemd-detect-virt"), "#!/bin/sh\necho lxc\n")
+    keel_init.default.write_text("RUN_FIRSTBOOT=true\n")
+    seen = tmp_path / "seen"
+    hook(keel_init.firstboot, "05autogrow-fs", f"echo ran >> '{seen}'")
+
+    with pytest.raises(SystemExit) as refused:
+        keel_init.main()
+
+    assert refused.value.code == 75
+    assert not seen.exists()
+    # the lock is let go, for the boot run that is about to start
+    assert init_lock.in_progress(lock) is None
+    assert capsys.readouterr().err == (
+        "keel-init: the first boot has not finished yet: its own run starts"
+        " at boot and asks its questions on the console, answer them there:"
+        " pct console <ctid> on Proxmox, or lxc-console -n <name> on LXC."
+        " keel-init reconfigures the machine once that run has finished.\n"
+    )
+
+
+def test_keel_init_runs_once_the_boot_run_has_completed(
+    keel_init, lock, tmp_path
+):
+    # RUN_FIRSTBOOT may still say true when 98finalize did not run; the
+    # marker says the boot run of this boot is over
+    keel_init.default.write_text("RUN_FIRSTBOOT=true\n")
+    keel_init.complete.touch()
+    seen = tmp_path / "seen"
+    hook(keel_init.firstboot, "30rootpass", f"echo ran >> '{seen}'")
+    keel_init.main()
+    assert seen.read_text() == "ran\n"
 
 
 def test_keel_init_releases_the_lock_before_confconsole(
@@ -381,6 +688,19 @@ def test_status_while_a_run_is_in_progress(
     )
 
 
+def test_status_before_the_boot_run_of_the_first_boot(
+    keel_init, lock, stubs, status_argv, capsys
+):
+    executable(str(stubs / "systemd-detect-virt"), "#!/bin/sh\necho kvm\n")
+    keel_init.default.write_text("RUN_FIRSTBOOT=true\n")
+    with pytest.raises(SystemExit) as pending:
+        keel_init.main()
+    assert pending.value.code == 75
+    assert capsys.readouterr().out == (
+        "    " + init_lock.pending_message("kvm") + "\n\n"
+    )
+
+
 def test_status_needs_no_root(keel_init, lock, monkeypatch, capsys):
     monkeypatch.setattr(keel_init.os, "geteuid", lambda: 1000)
     monkeypatch.setattr(keel_init, "fence_up", lambda: False)
@@ -476,11 +796,11 @@ def test_turnkey_init_names_itself(conffile_path, tmp_path):
     assert done.stderr.startswith("Syntax: turnkey-init ")
 
 
-def test_keel_init_refuses_while_the_boot_run_waits_in_a_hook(
-    keel_init, lock, stubs, tmp_path, capsys
-):
-    """The report of 2026-09-30: the boot run waits in 30rootpass on the
-    console, and keel-init is typed in another shell"""
+@pytest.fixture
+def boot(keel_init, stubs, tmp_path):
+    """A first boot for the real run: its hooks under tmp_path/boot, the
+    same default file and completion marker keel-init reads, and
+    keel-init's own hooks under tmp_path/lib"""
     for name, body in (
         ("logger", "exit 0"),
         ("systemctl", "echo running"),
@@ -489,30 +809,39 @@ def test_keel_init_refuses_while_the_boot_run_waits_in_a_hook(
         ("systemd-detect-virt", "echo lxc"),
     ):
         executable(str(stubs / name), f"#!/bin/sh\n{body}\n")
-    boot = tmp_path / "boot"
-    (boot / "firstboot.d").mkdir(parents=True)
-    fifo = tmp_path / "answer"
-    os.mkfifo(fifo)
-    seen = tmp_path / "seen"
-    hook(
-        boot / "firstboot.d",
-        "30rootpass",
-        f"echo boot >> '{seen}'\nread -r _ < '{fifo}'",
-    )
-    hook(keel_init.firstboot, "30rootpass", f"echo keel-init >> '{seen}'")
-    default = tmp_path / "default-inithooks"
-    default.write_text(
+    directory = tmp_path / "boot"
+    (directory / "firstboot.d").mkdir(parents=True)
+    keel_init.default.write_text(
         f"INITHOOKS_CONF={tmp_path}/inithooks.conf\n"
-        f"INITHOOKS_PATH={boot}\n"
+        f"INITHOOKS_PATH={directory}\n"
         f"INITHOOKS_LOGFILE={tmp_path}/inithooks.log\n"
         "RUN_FIRSTBOOT=true\nREDIRECT_OUTPUT=false\n"
     )
-    runner = subprocess.Popen(
+    return directory / "firstboot.d"
+
+
+def start_run():
+    # INITHOOKS_DEFAULT, INITHOOKS_COMPLETE and INITHOOKS_LOCK are in the
+    # environment the fixtures set
+    return subprocess.Popen(
         [RUN],
-        env={**os.environ, "INITHOOKS_DEFAULT": str(default)},
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+
+def test_keel_init_refuses_while_the_boot_run_waits_in_a_hook(
+    keel_init, lock, boot, tmp_path, capsys
+):
+    """The report of 2026-09-30: the boot run waits in 30rootpass on the
+    console, and keel-init is typed in another shell"""
+    fifo = tmp_path / "answer"
+    os.mkfifo(fifo)
+    seen = tmp_path / "seen"
+    hook(boot, "30rootpass", f"echo boot >> '{seen}'\nread -r _ < '{fifo}'")
+    hook(keel_init.firstboot, "30rootpass", f"echo keel-init >> '{seen}'")
+    runner = start_run()
     try:
         eventually(lambda: seen.exists())
 
@@ -520,7 +849,11 @@ def test_keel_init_refuses_while_the_boot_run_waits_in_a_hook(
             keel_init.main()
 
         assert refused.value.code == 75
-        assert f"(pid {runner.pid})" in capsys.readouterr().err
+        assert capsys.readouterr().err.startswith(
+            "keel-init: the first-boot wizard is running on the console"
+            f" (pid {runner.pid}, on /dev/null, in 30rootpass);"
+            " answer it there: pct console <ctid> on Proxmox"
+        )
         assert seen.read_text() == "boot\n"
     finally:
         with open(fifo, "w") as fob:
@@ -528,5 +861,29 @@ def test_keel_init_refuses_while_the_boot_run_waits_in_a_hook(
         runner.wait(timeout=10)
 
     # the boot run is over: now keel-init runs
+    keel_init.main()
+    assert seen.read_text() == "boot\nkeel-init\n"
+
+
+def test_keel_init_before_the_boot_run_leaves_the_first_boot_to_it(
+    keel_init, lock, boot, tmp_path, capsys
+):
+    """keel-init wins the race to the lock: it must not take the first
+    boot, and the boot run that follows must still do it"""
+    seen = tmp_path / "seen"
+    hook(boot, "05autogrow-fs", f"echo boot >> '{seen}'")
+    hook(keel_init.firstboot, "05autogrow-fs", f"echo keel-init >> '{seen}'")
+
+    with pytest.raises(SystemExit) as refused:
+        keel_init.main()
+    assert refused.value.code == 75
+    assert "the first boot has not finished yet" in capsys.readouterr().err
+    assert not seen.exists()
+
+    runner = start_run()
+    assert runner.wait(timeout=10) == 0
+    assert seen.read_text() == "boot\n"
+    assert keel_init.complete.exists()
+
     keel_init.main()
     assert seen.read_text() == "boot\nkeel-init\n"

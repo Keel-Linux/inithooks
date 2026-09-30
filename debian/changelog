@@ -13,6 +13,23 @@ inithooks (2.3.6+keel10) trixie; urgency=medium
   * run: waits for a keel-init that holds the lock, then reads
     RUN_FIRSTBOOT, so the firstboot scripts are not run again after a
     keel-init completed them.
+  * keel-init also refuses, with exit status 75, before the boot run of
+    the first boot has finished (RUN_FIRSTBOOT=true and no
+    /run/inithooks-complete). inithooks.service starts after getty.target,
+    so a keel-init typed after pct enter could take the lock first; the
+    hooks skip what only a first boot does under keel-init, 98finalize set
+    RUN_FIRSTBOOT=false, and the boot run then skipped the first boot: the
+    instance description was never applied and the filesystem never grown.
+  * The lock file describes its holder (kind, pid, tty, dtach socket,
+    phase, hook, preseeded), and the refusal is worded by it: a keel-init
+    in the dtach session of the first login names dtach -a and the socket,
+    a keel-init on a terminal names it, a preseeded boot run or the
+    everyboot phase says to wait, and only a boot run that asks questions
+    points at the console.
+  * keel-init tries the lock for half a second before refusing, so the
+    login message's probe of the lock cannot make it refuse.
+  * run: INITHOOKS_COMPLETE names the completion marker, for the tests.
+  * lintian: no-manual-page override for usr/sbin/keel-init.
   * /etc/update-motd.d/06-keel-init: the login message says where the
     first boot wizard waits while it runs, and to run keel-init while the
     init fence is up and no run is in progress (keel-init --status).

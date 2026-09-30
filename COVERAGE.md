@@ -4,6 +4,20 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/one-first-boot-run, after review: shell 99.71, Python 99
+
+keel-init refuses before the first boot's own run has finished, the lock
+file describes its holder so the refusal can say where it is, and keel-init
+retries the lock briefly. `lib/init-lock.sh` 22/22;
+`tests/test-init-lock.bats` 12 tests, `tests/test-run.bats` 17, 198 bats
+in all, shell total 99.71. `libinithooks/init_lock.py` 154 statements, 36
+branches, 100 percent, from 78 tests in `tests/test_init_lock.py`; Python
+total 99. The race is tested with the real `run`: keel-init first is
+refused and leaves the lock, the boot run then runs the firstboot hook and
+writes its marker, and keel-init runs after it. Mutations checked: without
+the first boot check three tests fail, without the description in `run`
+three bats fail.
+
 ## Branch fix/one-first-boot-run: shell 99.71 percent, Python 99 (2026-09-30)
 
 One first boot run at a time (Keel-Linux/inithooks#24) and `keel-init` as

@@ -63,14 +63,18 @@ The configuration dialogs run in one of two places:
 Only one run of the configuration dialogs can be in progress at a time. The
 first boot run and "keel-init" both hold a lock, /run/inithooks.lock (an
 flock the kernel releases when the run exits, however it exits), for as long
-as hooks run. While the first boot run waits for answers on the console,
-"keel-init" refuses (exit status 75) and says where to answer them: "pct
-console <ctid>" on Proxmox, "lxc-console -n <name>" on LXC, or the VM's
-console. The login message says the same, from
-/etc/update-motd.d/06-keel-init, and "run keel-init" while the
-initialization fence is up and no run is in progress. The first boot run
-itself waits for a "keel-init" that holds the lock, and then skips the
-firstboot scripts if that run completed them.
+as hooks run, and describes itself in it. While another run holds the lock,
+"keel-init" refuses (exit status 75) and says where that run is: a first
+boot run that asks questions waits on the console ("pct console <ctid>" on
+Proxmox, "lxc-console -n <name>" on LXC, or the VM's console), a
+"keel-init" left in the dtach session of the first login is reached with
+"dtach -a" and its socket, and a preseeded run or the everyboot phase only
+has to be waited for. "keel-init" also refuses before the first boot's own
+run has finished (RUN_FIRSTBOOT=true and no /run/inithooks-complete), since
+under "keel-init" the hooks skip what only a first boot does. The login
+message says the same, from /etc/update-motd.d/06-keel-init, and "run
+keel-init" while the initialization fence is up and no run is in progress.
+The first boot run itself waits for a "keel-init" that holds the lock.
 
 
 Non-interactive system initialization

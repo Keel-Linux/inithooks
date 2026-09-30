@@ -17,6 +17,7 @@ source "$INITHOOKS_DEFAULT"
 TERM=${TERM:-linux}
 RUN_FIRSTBOOT="${RUN_FIRSTBOOT,,}"
 TKLINFO="${TKLINFO:-/var/lib/turnkey-info}"
+INITHOOKS_COMPLETE="${INITHOOKS_COMPLETE:-/run/inithooks-complete}"
 REDIRECT_OUTPUT="${REDIRECT_OUTPUT,,}"
 PID=
 REBOOT_REQUIRED=
@@ -96,6 +97,7 @@ exec_scripts() {
             source "$INITHOOKS_CONF"
         fi
         script=$(basename "$script_executable")
+        init_lock_describe "$INITHOOKS_LOCK" "${firstboot:-everyboot}" "$script"
         if [[ -n "$firstboot" ]]; then
             # if firstboot, then only run <30 scripts - then wait
             prefix="${script:0:2}"
@@ -130,11 +132,13 @@ if [[ "$RUN_FIRSTBOOT" == "true" ]]; then
     exec_scripts "$INITHOOKS_PATH/firstboot.d" firstboot
 fi
 
-# ensure everyboot scripts only run once per boot
-if [[ ! -f /run/inithooks-complete ]]; then
+# ensure everyboot scripts only run once per boot. The marker also tells
+# keel-init that the boot run of this boot is over (libinithooks/init_lock.py
+# boot_pending), so it is written whatever RUN_FIRSTBOOT says.
+if [[ ! -f "$INITHOOKS_COMPLETE" ]]; then
     log info "Running everyboot scripts"
     exec_scripts "$INITHOOKS_PATH/everyboot.d"
-    touch /run/inithooks-complete
+    touch "$INITHOOKS_COMPLETE"
 fi
 
 # no hook runs after this point; confconsole below stays up for as long as

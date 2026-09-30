@@ -18,7 +18,8 @@ Execute firstboot initialization hooks, skipping blacklist
 
 Refuses, and exits 75, while another first boot run is in progress (the
 one inithooks starts at boot waits on the console): two runs at once would
-configure the machine twice.
+configure the machine twice. Refuses the same way before the first boot's
+own run has finished, which does what keel-init skips.
 
 firstboot.d hook execution environment:
 
@@ -55,7 +56,8 @@ def usage(e=None):
     print("  -c|--full-confconsole - after initialization open full confconsole (default is basic).")
     print("                          If Confconsole not installed, will be ignored.")
     print("  -s|--status           - say whether initialization is still pending, and exit:")
-    print("                          75 while a run is in progress, 0 otherwise")
+    print("                          75 while a run is in progress or the first boot has")
+    print("                          not finished, 0 otherwise")
     print("\nBlacklist:\n", file=sys.stderr)
     for script in BLACKLIST:
         print("    %s" % script, file=sys.stderr)
@@ -106,11 +108,20 @@ def fence_up():
     return done.returncode == 0
 
 
+def boot_pending():
+    return init_lock.boot_pending(init_lock.default_path(),
+                                  init_lock.complete_path())
+
+
 def status():
     """What the login message says while initialization is pending"""
     run = init_lock.in_progress(init_lock.lock_path())
     if run:
         print("    " + init_lock.wait_message(run, init_lock.detect_virt()))
+        print()
+        sys.exit(init_lock.EXIT_BUSY)
+    if boot_pending():
+        print("    " + init_lock.pending_message(init_lock.detect_virt()))
         print()
         sys.exit(init_lock.EXIT_BUSY)
     if fence_up():
@@ -120,17 +131,29 @@ def status():
     sys.exit(0)
 
 
+def refuse(message):
+    print("%s: %s" % (prog(), message), file=sys.stderr)
+    sys.exit(init_lock.EXIT_BUSY)
+
+
 def take_lock():
     try:
-        return init_lock.acquire(init_lock.lock_path())
+        lock = init_lock.acquire(init_lock.lock_path(),
+                                 init_lock.this_keel_init())
     except init_lock.Busy as busy:
         virt = init_lock.detect_virt()
         print("%s: %s" % (prog(), init_lock.wait_message(busy.run, virt)),
               file=sys.stderr)
-        print("%s: two runs at once would configure this machine twice;"
-              " run %s again once that one has finished." % (prog(), prog()),
-              file=sys.stderr)
-        sys.exit(init_lock.EXIT_BUSY)
+        refuse("two runs at once would configure this machine twice;"
+               " run %s again once that one has finished." % prog())
+    # Holding the lock, the boot run cannot start or finish under us. Before
+    # it has run, the first boot is its job: hooks skip what only a first
+    # boot does under keel-init (_TURNKEY_INIT), 98finalize would set
+    # RUN_FIRSTBOOT=false, and the boot run would then skip the first boot.
+    if boot_pending():
+        init_lock.release(lock)
+        refuse(init_lock.pending_message(init_lock.detect_virt()))
+    return lock
 
 
 def main():

@@ -18,6 +18,7 @@ setup() {
     setup_stubs
     ROOT=$BATS_TEST_TMPDIR
     export INITHOOKS_LOCK=$ROOT/inithooks.lock
+    export INITHOOKS_COMPLETE=$ROOT/inithooks-complete
     FIFO=$ROOT/release
     CONF=$ROOT/inithooks.conf
     LIB=$ROOT/lib
@@ -221,4 +222,48 @@ sed -i 's/RUN_FIRSTBOOT=true/RUN_FIRSTBOOT=false/' '$DEFAULT'" &
     [ "$status" -eq 1 ]
     [[ "$output" == *"cannot open the first boot lock"* ]]
     [ ! -e "$SEEN" ]
+}
+
+@test "a firstboot hook finds the run described in the lock" {
+    probe 30probe "cp '$INITHOOKS_LOCK' '$ROOT/described'"
+
+    run_runner
+
+    [ "$status" -eq 0 ]
+    grep -qx 'kind=run' "$ROOT/described"
+    grep -qx 'phase=firstboot' "$ROOT/described"
+    grep -qx 'hook=30probe' "$ROOT/described"
+    grep -qx 'preseeded=' "$ROOT/described"
+}
+
+@test "a preseeded first boot says so in the lock" {
+    echo 'export AUTO_RUN=TRUE' > "$CONF"
+    probe 95probe "cp '$INITHOOKS_LOCK' '$ROOT/described'"
+
+    run_runner
+
+    grep -qx 'preseeded=yes' "$ROOT/described"
+}
+
+@test "an everyboot hook finds the everyboot phase in the lock" {
+    mkdir -p "$LIB/everyboot.d"
+    cat > "$LIB/everyboot.d/01probe" <<PROBE
+#!/bin/bash
+cp '$INITHOOKS_LOCK' '$ROOT/described'
+PROBE
+    chmod +x "$LIB/everyboot.d/01probe"
+
+    run_runner
+
+    grep -qx 'phase=everyboot' "$ROOT/described"
+    grep -qx 'hook=01probe' "$ROOT/described"
+}
+
+@test "run marks the boot run of this boot complete" {
+    [ ! -e "$INITHOOKS_COMPLETE" ]
+
+    run_runner
+
+    [ "$status" -eq 0 ]
+    [ -e "$INITHOOKS_COMPLETE" ]
 }

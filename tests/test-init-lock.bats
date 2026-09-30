@@ -35,11 +35,11 @@ is_held() {
     ! is_free
 }
 
-# hold_until_released PID_TEXT
-# Another process writes PID_TEXT into the file, holds the lock until the
-# fifo is written, and is waited for until it does hold it.
+# hold_until_released PID
+# Another process describes itself as keel-init PID in the file, holds the
+# lock until the fifo is written, and is waited for until it does hold it.
 hold_until_released() {
-    printf '%s\n' "$1" > "$LOCK"
+    printf 'kind=keel-init\npid=%s\ntty=/dev/pts/2\n' "$1" > "$LOCK"
     flock "$LOCK" -c "read -r _ < '$FIFO'" &
     HOLDER=$!
     eventually is_held
@@ -57,12 +57,40 @@ hold_until_released() {
     [ "$output" = /elsewhere ]
 }
 
-@test "take holds the lock and writes the pid of the shell" {
-    init_lock_take "$LOCK"
+@test "take holds the lock and describes the run" {
+    init_lock_take "$LOCK" < /dev/null
 
     [ -n "$INIT_LOCK_FD" ]
-    [ "$(cat "$LOCK")" = "$$" ]
+    [ "$(cat "$LOCK")" = "kind=run
+pid=$$
+tty=/dev/null
+phase=
+hook=
+preseeded=" ]
     run ! is_free
+}
+
+@test "describe names the phase, the hook and a preseed" {
+    AUTO_RUN=TRUE init_lock_describe "$LOCK" firstboot 95secupdates < /dev/null
+
+    [ "$(cat "$LOCK")" = "kind=run
+pid=$$
+tty=/dev/null
+phase=firstboot
+hook=95secupdates
+preseeded=yes" ]
+}
+
+@test "describe replaces a longer description" {
+    printf 'hook=%0200d\n' 0 > "$LOCK"
+
+    unset AUTO_RUN
+    init_lock_describe "$LOCK" everyboot 01empty
+
+    [ "$(wc -l < "$LOCK")" -eq 6 ]
+    run ! grep -q 0000 "$LOCK"
+    grep -qx 'phase=everyboot' "$LOCK"
+    grep -qx 'hook=01empty' "$LOCK"
 }
 
 @test "release lets another process take the lock" {
