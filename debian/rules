@@ -10,8 +10,15 @@ export PYTHONDONTWRITEBYTECODE=1
 %:
 	dh $@ --with=python3 --buildsystem=pybuild
 
+# debian/postinst enables inithooks and turnkey-init-fence on a fresh install
+# and restarts them on an upgrade only when they were running, so debhelper
+# neither enables nor starts them: a start at install would take tty1.
+# keel-host-keys.service is enabled by debhelper, on install and on an
+# upgrade from a version that did not enable it, and never started by the
+# package: started inside an image build it would bake the keys it exists to
+# keep out of the image. It runs at the next boot.
 override_dh_installsystemd:
-	dh_installsystemd --name=inithooks
-	dh_installsystemd --name=inithooks-restart-getty1
-	dh_installsystemd --name=turnkey-init-fence
-	dh_installsystemd --name=keel-host-keys
+	dh_installsystemd --name=inithooks --no-enable --no-start
+	dh_installsystemd --name=inithooks-restart-getty1 --no-enable --no-start
+	dh_installsystemd --name=turnkey-init-fence --no-enable --no-start
+	dh_installsystemd --name=keel-host-keys --no-start

@@ -1,3 +1,23 @@
+inithooks (2.3.6+keel14) trixie; urgency=medium
+
+  * keel-host-keys.service is enabled. debian/postinst had no #DEBHELPER#
+    token, so dh_installsystemd's enable snippet never reached the package
+    and the unit never ran: on an image with no host key (common 19.x,
+    keel-core#8) sshd and the init fence failed at first boot, and apache2
+    after an interactive one, until a reboot. The Template B3 build found
+    it. The token is back in postinst and preinst; debian/rules lets
+    debhelper enable keel-host-keys.service, also on an upgrade from a
+    version that did not, and keeps it from enabling or starting inithooks,
+    inithooks-restart-getty1 and turnkey-init-fence, which postinst still
+    handles itself. No unit is started by the package: keel-host-keys runs
+    at the next boot, not inside an image build.
+  * The generated postinst now also byte-compiles the Python modules
+    (dh_python3), which the missing token had skipped as well.
+  * tests/test-packaging.bats runs debhelper over debian/ and checks the
+    packaged maintainer scripts; CI installs debhelper for it.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Wed, 30 Sep 2026 14:00:00 +0000
+
 inithooks (2.3.6+keel13) trixie; urgency=medium
 
   * firstboot.d/75keel-role: the first boot asks this node's role,

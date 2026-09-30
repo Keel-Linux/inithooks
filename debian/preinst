@@ -9,3 +9,7 @@ if [ "$1" = "upgrade" ]; then
         fi
     done
 fi
+
+#DEBHELPER#
+
+exit 0

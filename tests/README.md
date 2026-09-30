@@ -8,6 +8,11 @@
   paths, with external commands (`ip`, `ifup`, `systemctl`, `iptables`,
   `ip6tables`, `turnkey-version`, `head`) replaced by stubs placed first in
   `PATH`. Nothing in a test touches the live system.
+- `test-packaging.bats`: runs the real `dh_installsystemd` and
+  `dh_installdeb` over a copy of `debian/` and checks the maintainer scripts
+  the package would carry, for one that `keel-host-keys.service` is enabled
+  by the generated postinst. Needs `debhelper`; skipped without it, except
+  in CI.
 - `helpers.bash`: the stub helpers (`setup_stubs`, `stub`, `calls`), and
   `eventually` and `let_go` for tests that wait on another process.
 - `test_init_lock.py`: pytest tests of the first boot lock
