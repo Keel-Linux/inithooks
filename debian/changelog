@@ -23,8 +23,16 @@ inithooks (2.3.6+keel11) trixie; urgency=medium
     (keel-wordpress) print KEY=value for a hook that reads it through a
     pipe, so the screen went into the pipe: the operator saw nothing,
     dialog failed and the first boot hung in 35mysqlpass.
-  * dialog_wrapper: ESC on a widget that returns a value (a menu, a
-    password box) asks whether to quit, as it does on the others.
+  * dialog_wrapper: ESC never skips a password or another value. On a
+    menu, an input box or a password box, and on every dialog of
+    get_password(), ESC shows the dialog again; "really quit?" stays on
+    the widgets that return a bare code, elsewhere. A quit inside
+    get_password() had ended setpass.py with status 0 and no chpasswd, and
+    30rootpass carried on with the password unchanged.
+  * dialog_wrapper: when nothing can be generated (gen_length under 12, or
+    a blacklist that leaves no letter or digit), Generate falls back to
+    Manual instead of raising. The password dialogs compute their height
+    at the width they are drawn with, counting visible characters.
 
  -- Marcos Mendez <mendez.foto@gmail.com>  Wed, 30 Sep 2026 05:30:14 +0000
 

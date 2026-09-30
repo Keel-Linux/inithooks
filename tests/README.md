@@ -21,7 +21,8 @@
   (the first boot dialogs). `fake_dialog.py` stands in for pythondialog:
   each widget answers from a script the test gives, in order, and every
   call is recorded, so the dialogs run without a terminal or the `dialog`
-  package.
+  package. `test_setpass.py` runs `bin/setpass.py` on the same fake, with
+  chpasswd replaced at the subprocess boundary.
 - `test-simplehttpd.sh`: manual launcher of the fence mini server.
 
 ## Running the shell tests

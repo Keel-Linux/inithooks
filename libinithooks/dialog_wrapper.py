@@ -186,6 +186,8 @@ class Dialog:
     def __init__(self, title: str, width: int = 60, height: int = 20) -> None:
         self.width = width
         self.height = height
+        # True while get_password() runs: no widget of it may quit
+        self._value_required = False
 
         self.console = dialog.Dialog(dialog="dialog")
         self.console.add_persistent_args(["--no-collapse"])
@@ -204,10 +206,14 @@ class Dialog:
         )
         return True
 
-    def _calc_height(self, text: str) -> int:
+    def _calc_height(self, text: str, width: int | None = None) -> int:
+        """Rows for TEXT in a dialog WIDTH wide (self.width by default);
+        the \\Z attribute codes take no room on the screen"""
+        width = width or self.width
         height = 6
         for line in text.splitlines():
-            height += (len(line) // self.width) + 1
+            visible = len(re.sub(r"\\Z.", "", line))
+            height += (visible // width) + 1
 
         return height
 
@@ -216,7 +222,14 @@ class Dialog:
     ) -> str | tuple[str, str]:
         """Show widget DIALOG_NAME with TEXT and return what pythondialog
         returns: the exit code, or (exit code, value) for a widget that
-        takes input. ESC asks whether to quit, for every widget.
+        takes input.
+
+        ESC asks whether to quit, and quits with status 0 on Yes, only on
+        a widget that returns a bare code outside get_password(). On a
+        widget that returns a value (a menu, an input or a password box),
+        and on every widget of get_password(), ESC shows the widget again:
+        a quit there would end the caller with status 0 and no value, and
+        firstboot.d/30rootpass would carry on with the password unset.
 
         TEXT is never logged, nor is the value of a password box: TEXT may
         carry a generated password, and at DEBUG (DIALOG_DEBUG) the rest
@@ -246,6 +259,14 @@ class Dialog:
                     logging.debug(
                         f"wrapper(dialog_name={dialog_name!r}, ...) -> {shown}"
                     )
+                    if code == self.console.ESC and (
+                        isinstance(retcode, tuple) or self._value_required
+                    ):
+                        logging.debug(
+                            f"wrapper(dialog_name={dialog_name!r}, ...):"
+                            " ESC, a value is required, asking again"
+                        )
+                        continue
                     if self._handle_exitcode(code):
                         break
 
@@ -390,8 +411,34 @@ class Dialog:
         When no generated password can satisfy them (a pass_req regex), the
         operator is told so and asked to type one.
 
+        ESC never skips the password: every dialog of it is shown again.
+
         Returns password"""
-        blacklist = list(blacklist or [])
+        required = self._value_required
+        self._value_required = True
+        try:
+            return self._get_password(
+                title,
+                text,
+                pass_req,
+                min_complexity,
+                list(blacklist or []),
+                offer_generate,
+                gen_length,
+            )
+        finally:
+            self._value_required = required
+
+    def _get_password(
+        self,
+        title: str,
+        text: str,
+        pass_req: int | str,
+        min_complexity: int,
+        blacklist: list[str],
+        offer_generate: bool,
+        gen_length: int,
+    ) -> str:
         if offer_generate:
             choice = self.menu(
                 title,
@@ -451,7 +498,13 @@ class Dialog:
         while True:
             password = None
             for _ in range(GENERATE_TRIES):
-                candidate = generate_password(length, exclude)
+                try:
+                    candidate = generate_password(length, exclude)
+                except ValueError as e:
+                    # a length under the minimum, or a blacklist that
+                    # leaves no letter or digit: nothing can be generated
+                    logging.error(f"_generate_password_flow(): {e}")
+                    break
                 if not password_problem(
                     candidate, pass_req, min_complexity, blacklist
                 ):
@@ -480,7 +533,7 @@ class Dialog:
             self.wrapper(
                 "msgbox",
                 shown,
-                self._calc_height(shown),
+                self._calc_height(shown, width),
                 width,
                 title=title,
                 colors=True,
@@ -501,7 +554,7 @@ class Dialog:
             saved = self.wrapper(
                 "yesno",
                 confirm,
-                self._calc_height(confirm),
+                self._calc_height(confirm, width),
                 width,
                 title=title,
                 yes_label="Saved",

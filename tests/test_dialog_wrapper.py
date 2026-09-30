@@ -237,18 +237,42 @@ class TestGetPasswordGenerate(unittest.TestCase):
         )
         self.assertIn("type one", d.console.calls[1][1])
 
-    def test_escape_on_the_menu_asks_to_quit_and_can_go_back(self):
-        d = dialog((ESC, ""), CANCEL, GENERATE, OK, OK)
+    def test_escape_on_the_menu_shows_it_again(self):
+        d = dialog((ESC, ""), (ESC, ""), GENERATE, OK, OK)
         self.assertEqual(len(d.get_password("t", "x")), 20)
         self.assertEqual(
-            d.console.widgets(), ["menu", "yesno", "menu", "msgbox", "yesno"]
+            d.console.widgets(), ["menu", "menu", "menu", "msgbox", "yesno"]
         )
-        self.assertIn("quit", d.console.calls[1][1])
+        self.assertNotIn("quit", d.console.shown())
 
-    def test_escape_on_the_menu_then_yes_quits(self):
-        d = dialog((ESC, ""), OK)
-        with self.assertRaises(SystemExit):
-            d.get_password("t", "x")
+    def test_escape_in_the_generate_flow_never_skips_the_password(self):
+        # Before, "really quit?" and Yes ended setpass.py with status 0 and
+        # no chpasswd, and 30rootpass carried on with the password unset.
+        d = dialog(GENERATE, ESC, OK, ESC, OK)
+        password = d.get_password("t", "x")
+        self.assertEqual(
+            d.console.widgets(), ["menu", "msgbox", "msgbox", "yesno", "yesno"]
+        )
+        for call in d.console.calls[1:]:
+            self.assertEqual(shown_password(call[1]), password)
+        self.assertNotIn("quit", d.console.shown())
+
+    def test_generator_refusing_the_length_falls_back_to_manual(self):
+        d = dialog(GENERATE, OK, (OK, "Abcdefg1"), (OK, "Abcdefg1"))
+        self.assertEqual(d.get_password("t", "x", gen_length=8), "Abcdefg1")
+        self.assertEqual(
+            d.console.widgets(), ["menu", "msgbox", "passwordbox", "passwordbox"]
+        )
+        self.assertIn("type one", d.console.calls[1][1])
+
+    def test_blacklist_leaving_no_letter_or_digit_falls_back_to_manual(self):
+        blacklist = list(string.ascii_letters + string.digits)
+        d = dialog(GENERATE, OK, (OK, "-.~-.~-.~"), (OK, "-.~-.~-.~"))
+        password = d.get_password(
+            "t", "x", min_complexity=1, blacklist=blacklist
+        )
+        self.assertEqual(password, "-.~-.~-.~")
+        self.assertEqual(d.console.calls[1][3]["title"], "Error")
 
 
 class TestGetPasswordManual(unittest.TestCase):
@@ -279,6 +303,24 @@ class TestGetPasswordManual(unittest.TestCase):
         )
         self.assertEqual(d.get_password("t", "x", blacklist=['"']), "Abcdefg1")
         self.assertIn('NOT contain these characters: "', d.console.calls[1][1])
+
+    def test_escape_in_the_password_box_asks_again(self):
+        d = dialog(
+            MANUAL,
+            (ESC, ""),
+            (OK, "Abcdefg1"),
+            (ESC, ""),
+            (OK, "Abcdefg1"),
+        )
+        self.assertEqual(d.get_password("t", "x"), "Abcdefg1")
+        self.assertEqual(d.console.widgets(), ["menu"] + ["passwordbox"] * 4)
+        self.assertNotIn("quit", d.console.shown())
+
+    def test_escape_in_the_password_box_without_the_menu(self):
+        d = dialog((ESC, ""), (OK, "Abcdefg1"), (OK, "Abcdefg1"))
+        password = d.get_password("t", "x", offer_generate=False)
+        self.assertEqual(password, "Abcdefg1")
+        self.assertEqual(d.console.widgets(), ["passwordbox"] * 3)
 
     def test_offer_generate_false_is_the_old_behaviour(self):
         d = dialog((OK, "Abcdefg1"), (OK, "Abcdefg1"))
@@ -399,6 +441,30 @@ class TestScreenOnTheTerminal(unittest.TestCase):
             d.msgbox("T", "m")
         self.assertEqual(self.read(self.out), self.SCREEN)
 
+    def test_wide_password_with_stdout_already_on_the_terminal(self):
+        # A script that dup'd the terminal onto fd 1 before using Dialog:
+        # nothing is redirected, ESC re-shows the box, and the height is
+        # computed at the width the password dialogs are drawn with.
+        def draw_text():
+            os.write(1, d.console.calls[-1][1].encode())
+            return OK
+
+        d = dialog(GENERATE, ESC, draw_text, draw_text)
+        with (
+            mock.patch.object(dw, "TTY", self.tty),
+            mock.patch.object(dw.os, "isatty", return_value=True),
+        ):
+            password = d.get_password("t", "x", gen_length=56)
+        self.assertEqual(len(password), 56)
+        self.assertEqual(self.read(self.tty), b"")
+        self.assertIn(password.encode(), self.read(self.out))
+        for widget, shown, args, _ in d.console.calls[1:]:
+            height, width = args
+            text = shown.removeprefix("\n")  # wrapper() adds it
+            self.assertEqual(width, 68, widget)
+            self.assertEqual(height, d._calc_height(text, width), widget)
+            self.assertLess(height, d._calc_height(text), widget)
+
     def test_generated_password_never_reaches_a_captured_stdout(self):
         def draw_text():
             os.write(1, d.console.calls[-1][1].encode())
@@ -433,6 +499,25 @@ class TestWidgets(unittest.TestCase):
         self.assertEqual(d.inputbox("T", "t", cancel_label=""), (OK, "b"))
         self.assertFalse(d.console.calls[0][3]["no_cancel"])
         self.assertTrue(d.console.calls[1][3]["no_cancel"])
+
+    def test_escape_on_a_message_still_offers_to_quit(self):
+        d = dialog(ESC, CANCEL, OK)
+        self.assertEqual(d.msgbox("T", "m"), OK)
+        self.assertEqual(d.console.widgets(), ["msgbox", "yesno", "msgbox"])
+        d = dialog(ESC, OK)
+        with self.assertRaises(SystemExit):
+            d.msgbox("T", "m")
+
+    def test_escape_in_an_input_box_asks_again(self):
+        d = dialog((ESC, ""), (OK, "a@example.org"))
+        self.assertEqual(d.get_email("E", "t"), "a@example.org")
+        self.assertEqual(d.console.widgets(), ["inputbox", "inputbox"])
+
+    def test_calc_height_counts_visible_characters_at_a_width(self):
+        d = dialog()
+        self.assertEqual(d._calc_height("x" * 61), 8)
+        self.assertEqual(d._calc_height("x" * 61, 68), 7)
+        self.assertEqual(d._calc_height("\\Zb" + "x" * 59 + "\\Zn"), 7)
 
     def test_yesno(self):
         d = dialog(OK, CANCEL)

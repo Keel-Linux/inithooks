@@ -8,23 +8,28 @@ file our changes touch).
 
 `libinithooks/dialog_wrapper.py` leaves the `omit` list of
 `pyproject.toml` and joins `include`: it was 0 percent, with no test.
-`tests/test_dialog_wrapper.py` (57 tests) drives it through
+`tests/test_dialog_wrapper.py` (65 tests) drives it through
 `tests/fake_dialog.py`, a stand-in for pythondialog that answers each
 widget from a script and records what was shown, so no terminal is needed:
 the generator (alphabet, length, classes, exclusions, the secrets module),
 the generate path, the refused confirmation, the manual path and its
-refusals, `offer_generate=False`, ESC on the menu, the logs (a file handler
+refusals, `offer_generate=False`, ESC (shown again in every dialog of
+`get_password` and every value widget, "really quit?" on a message only),
+the fallback to Manual when nothing can be generated, the height at the
+dialog's own width, the logs (a file handler
 at DEBUG on the root logger, as `DIALOG_DEBUG` gives `/var/log/dialog.log`,
 must not contain the generated or the typed password), the screen drawn on
 the terminal with a captured stdout, and the other widgets and
-`validate_domain`.
+`validate_domain`. `tests/test_setpass.py` (2 tests) runs `bin/setpass.py`
+with ESC in the password box and in the generate flow, and asserts that
+chpasswd still receives the password.
 
-Measured with `coverage run --branch --source=libinithooks,bin`: 285
+Measured with `coverage run --branch --source=libinithooks,bin`: 300
 statements, 4 missed, 98 percent. The missed lines are line 22 (`LOG_LEVEL`
-under `DIALOG_DEBUG`, set at import) and lines 601 to 603 of `get_domain`,
+under `DIALOG_DEBUG`, set at import) and lines 654 to 656 of `get_domain`,
 a branch on a message `validate_domain` never returns, which would raise
 `NameError` on `p` if it could run (inherited). Python total 99 percent,
-359 passed and 3 skipped (the vocabulary tests, without `KEEL_SRC`) with
+369 passed and 3 skipped (the vocabulary tests, without `KEEL_SRC`) with
 master merged, `init_lock.py` of fix/one-first-boot-run included.
 
 ## Branch fix/one-first-boot-run, second review: shell 99.71, Python 99
