@@ -4,6 +4,19 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch feat/first-boot-role: shell 99.76, Python 99 (2026-09-30)
+
+`lib/keel-firstboot.sh` 8/8, `firstboot.d/75keel-role` 4/4 and
+`firstboot.d/80keel-cloud` 4/4, 100 percent each, from 8 tests in
+`tests/test-keel-firstboot.bats` with python3 stubbed: the step each
+hook asks for, a preseeded HUB_APIKEY reaching the screen, no conf file,
+confconsole absent (nothing asked, the boot goes on), a failed screen's
+status, the default entry point, and 80hub-services and
+bin/hubservices.py gone. 223 bats in all with master's restart-getty
+tests, shell total 99.76. The screens themselves are confconsole's
+`keelfirstboot.py`, measured there at 100 percent. `bin/hubservices.py`
+is removed, so it leaves the `omit` list; Python unchanged, 99 percent.
+
 ## Branch fix/restart-getty-container: shell 99.75 percent (2026-09-30)
 
 `bin/restart-getty` was 0 percent, with no test; it is now 61/61 under
