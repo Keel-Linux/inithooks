@@ -4,6 +4,19 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/restart-getty-container: shell 99.75 percent (2026-09-30)
+
+`bin/restart-getty` was 0 percent, with no test; it is now 61/61 under
+kcov 43, from `tests/test-restart-getty.bats` (15 tests). systemctl and
+systemd-run are stubs answering from a scratch state directory, and the
+ttys are scratch files and links resolved by the real readlink, as
+/dev/tty1 -> lxc/tty1 is in an LXC container: the VM case, plain LXC
+(getty@tty1 skipped, agetty in a transient unit on lxc/tty1), Proxmox
+(container-getty@1 on lxc/tty1), a getty unit on another tty, none
+enabled, a failed start, the wait for inithooks.service and giving up,
+and the fatal paths with the Keel issues URL. 213 bats in all, total
+99.75, the lowest file still `lib/init-fence.sh` at 98.81.
+
 ## Branch feat/generated-password: dialog_wrapper.py 98 percent (2026-09-30)
 
 `libinithooks/dialog_wrapper.py` leaves the `omit` list of
