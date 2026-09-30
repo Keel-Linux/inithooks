@@ -5,6 +5,7 @@ testpaths = ["tests"]
 branch = true
 include = [
     "libinithooks/declarative.py",
+    "libinithooks/dialog_wrapper.py",
     "libinithooks/init_lock.py",
     "bin/declarative.py",
 ]
@@ -14,7 +15,6 @@ include = [
 # when its tests land (COVERAGE.md, plan to reach 90 percent per file).
 omit = [
     "libinithooks/__init__.py",
-    "libinithooks/dialog_wrapper.py",
     "libinithooks/inithooks_cache.py",
     "libinithooks/inithooks_log.py",
     "bin/hubservices.py",

@@ -1,3 +1,41 @@
+inithooks (2.3.6+keel11) trixie; urgency=medium
+
+  * dialog_wrapper: get_password() offers a generated password
+    (Keel-Linux/inithooks#23), from turnkeylinux/inithooks#71 by Marcos
+    Mendez, as revised in #74. A menu comes first, "Generate (recommended)"
+    or "Manual". Generate draws 20 characters with the secrets module from
+    59: letters and digits without 0 O o 1 l I, and - . ~, which need no
+    escaping in a shell word, a URL, a PHP string or the KEY=value line
+    the database and WordPress hooks read; the first and last are a letter
+    or a digit. The password is shown in bold reverse video and returned
+    only once the operator answers "Saved"; "New" shows another. It meets
+    the caller's pass_req, min_complexity and blacklist, which Manual still
+    enforces as before. offer_generate=False keeps the old prompt alone.
+    From the review of #74: a length under 12 is refused, blacklisted
+    characters are left out, and only attributes are used, not colors.
+  * dialog_wrapper: a password never reaches /var/log/dialog.log. At
+    DEBUG (DIALOG_DEBUG) the wrapper logged each widget's answer, so a
+    typed password was written there; a password box's value is now
+    redacted, and the text shown, which carries a generated password, was
+    already.
+  * dialog_wrapper: the widgets draw on the controlling terminal when
+    stdout is not one. bin/dbpass.py (keel-mariadb) and bin/wordpress.py
+    (keel-wordpress) print KEY=value for a hook that reads it through a
+    pipe, so the screen went into the pipe: the operator saw nothing,
+    dialog failed and the first boot hung in 35mysqlpass.
+  * dialog_wrapper: ESC never skips a password or another value. On a
+    menu, an input box or a password box, and on every dialog of
+    get_password(), ESC shows the dialog again; "really quit?" stays on
+    the widgets that return a bare code, elsewhere. A quit inside
+    get_password() had ended setpass.py with status 0 and no chpasswd, and
+    30rootpass carried on with the password unchanged.
+  * dialog_wrapper: when nothing can be generated (gen_length under 12, or
+    a blacklist that leaves no letter or digit), Generate falls back to
+    Manual instead of raising. The password dialogs compute their height
+    at the width they are drawn with, counting visible characters.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Wed, 30 Sep 2026 05:30:14 +0000
+
 inithooks (2.3.6+keel10) trixie; urgency=medium
 
   * One first boot run at a time (Keel-Linux/inithooks#24). The boot run
