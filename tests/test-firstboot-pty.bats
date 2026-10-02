@@ -66,7 +66,8 @@ EOF
     export INITHOOKS_DEFAULT=$DEFAULT
     export INITHOOKS_LOCK=$ROOT/inithooks.lock
     export INITHOOKS_COMPLETE=$ROOT/inithooks-complete
-    export PYTHONPATH=$REPO
+    export PYTHONPATH=$REPO${PYTHONPATH:+:$PYTHONPATH}
+    export DIALOG_LOG=$ROOT/dialog.log
     export TERM=linux LINES=25 COLUMNS=80
     : > "$SCREEN"
 }
@@ -174,7 +175,8 @@ assert_next_screen() {
 
     [ "$status" -eq 0 ]
     assert_next_screen
-    grep -qa 'container' "$SCREEN"
+    # Keep was offered, and only Keep is recommended when it is
+    grep -qa '(recommended)' "$SCREEN"
     [ ! -e "$ROOT/chpasswd" ]
 }
 

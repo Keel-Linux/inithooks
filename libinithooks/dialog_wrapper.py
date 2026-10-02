@@ -21,8 +21,12 @@ LOG_LEVEL = logging.INFO
 if "DIALOG_DEBUG" in environ.keys():
     LOG_LEVEL = logging.DEBUG
 
+# DIALOG_LOG names another file, for tests that run a hook as a user who
+# cannot write /var/log
 logging.basicConfig(
-    filename="/var/log/dialog.log", encoding="utf-8", level=LOG_LEVEL
+    filename=environ.get("DIALOG_LOG", "/var/log/dialog.log"),
+    encoding="utf-8",
+    level=LOG_LEVEL,
 )
 
 
