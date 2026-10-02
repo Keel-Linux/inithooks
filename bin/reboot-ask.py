@@ -33,7 +33,7 @@ def main():
         if opt in ("-h", "--help"):
             usage()
 
-    d = Dialog("TurnKey GNU/Linux - Reboot after kernel update")
+    d = Dialog("Keel Linux - Reboot after kernel update")
     reboot = d.yesno("Reboot now?", TEXT, "Reboot", "Skip")
 
     if not reboot:

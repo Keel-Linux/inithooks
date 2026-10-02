@@ -1,3 +1,32 @@
+inithooks (2.3.6+keel15) trixie; urgency=medium
+
+  * The first boot names Keel Linux. The backtitle at the top of every
+    first boot screen read "TurnKey GNU/Linux - First boot configuration"
+    (or "TurnKey Linux - ..."); the hooks of this package now pass
+    "Keel Linux - First boot configuration", and Dialog shows a title
+    that still starts with a TurnKey name, as the hooks of appliance
+    repositories and of common do, as Keel Linux too
+    (dialog_wrapper.backtitle()), so no appliance needs a release for it.
+  * The security alerts screen no longer subscribes the operator to
+    TurnKey's newsletter: bin/secalerts.sh posted the address to the
+    TurnKey Hub API from an hourly cron job, and the screen said so with
+    a turnkeylinux.org link. Both are gone; the screen and the mail it
+    sends now say only what the appliance does, forward root's mail to
+    the address given.
+  * The security updates screen no longer links to turnkeylinux.org.
+  * The init fence page welcomes the operator to a Keel Linux appliance
+    and links to keellinux.org and the Keel tracker instead of the
+    TurnKey product page and contact form; its screenshot of the root
+    password screen is a render of the Keel one.
+  * Kept, because they are names a system or a script uses rather than
+    branding: the turnkey-init link, turnkey-init-fence,
+    turnkey-install-security-updates (the update screen still names it
+    as the command to run), _TURNKEY_INIT, /etc/turnkey_version and the
+    archive host the update screen checks it can reach; and every
+    copyright and attribution notice.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Fri, 02 Oct 2026 04:00:00 +0000
+
 inithooks (2.3.6+keel14) trixie; urgency=medium
 
   * keel-host-keys.service is enabled. debian/postinst had no #DEBHELPER#
