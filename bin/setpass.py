@@ -52,7 +52,7 @@ def main():
     if not password:
         from libinithooks.dialog_wrapper import Dialog
 
-        d = Dialog("TurnKey GNU/Linux - First boot configuration")
+        d = Dialog("Keel Linux - First boot configuration")
         password = d.get_password(
             f"{username.capitalize()} Password",
             f"Please enter new password for the {username} account.",

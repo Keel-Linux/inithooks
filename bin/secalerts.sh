@@ -38,37 +38,16 @@ send_enabled_notification() {
     subject="[$(hostname)] system alerts and notifications enabled"
     mail -s "$subject" $recipient <<EOF
 This server is configured to send you system alerts and notifications.
-For more information, see:
-https://www.turnkeylinux.org/security-alerts
 
 --
 $(turnkey-version)
 EOF
 }
 
-enable_security_alerts() {
-    info $FUNCNAME $@
-    email=$1
-
-    f=/etc/apt/apt.conf.d/01turnkey
-    [ -e "$f" ] && turnkey_version=$(sed "s/.*(\(.*\)).*/\1/" $f)
-    [ -n "$turnkey_version" ] || turnkey_version=$(turnkey-version)
-
-    script=/etc/cron.hourly/enable_secalerts
-    cat>$script<<EOF
-#!/bin/bash -e
-# created by: $(readlink -f $0)
-curl https://hub.turnkeylinux.org/api/server/secalerts/ \\
-    -d email="$email" \\
-    -d turnkey_version="$turnkey_version" \\
-    --silent --fail --output /dev/null || exit 0
-
-rm -f \$0
-EOF
-
-    chmod +x $script
-    $script
-}
+# The address is not sent anywhere. TurnKey's version of this script also
+# subscribed it to TurnKey's newsletter through the TurnKey Hub API; a
+# Keel appliance does not hand the operator's address to another project,
+# and the screen no longer says it will.
 
 if [[ "$#" != "1" ]]; then
     usage
@@ -80,5 +59,4 @@ configure_alias "root" "$email"
 configure_cronapt "MAILON" "output"
 configure_cronapt "MAILTO" "root"
 send_enabled_notification "root"
-enable_security_alerts "$email"
 

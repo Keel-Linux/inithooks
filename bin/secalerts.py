@@ -23,10 +23,6 @@ TEXT = (
     "Enable local system notifications (root@localhost) to be forwarded to"
     " your regular inbox. Notifications include security updates and system"
     " messages.\n\n"
-    "You will also be subscribed to receive critical security and bug alerts"
-    " through a low-traffic Security and News announcements newsletter. You"
-    " can unsubscribe at any time.\n\n"
-    "https://www.turnkeylinux.org/security-alerts\n\n"
     "Email:"
 )
 
@@ -70,7 +66,7 @@ def main():
         fatal("email is not valid")
 
     if not email:
-        d = Dialog("TurnKey Linux - First boot configuration")
+        d = Dialog("Keel Linux - First boot configuration")
         email = email_placeholder
         while 1:
             retcode, email = d.inputbox(TITLE, TEXT, email, "Enable", "Skip")

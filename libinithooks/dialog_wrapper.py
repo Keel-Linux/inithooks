@@ -69,6 +69,21 @@ GENERATE_TRIES = 100
 SECRET_WIDGETS = ("passwordbox",)
 # The controlling terminal, where the widgets draw when stdout is not one.
 TTY = "/dev/tty"
+# The name every first boot backtitle starts with. Hooks written for
+# TurnKey (in appliance repositories and in common) still pass a title
+# starting with one of LEGACY_BRANDS; backtitle() shows those as BRAND, so
+# the operator never reads another distribution's name at the top of the
+# screen whichever package the hook came from.
+BRAND = "Keel Linux"
+LEGACY_BRANDS = ("TurnKey GNU/Linux", "TurnKey Linux")
+
+
+def backtitle(title: str) -> str:
+    """TITLE with a leading TurnKey name replaced by BRAND"""
+    for legacy in LEGACY_BRANDS:
+        if title.startswith(legacy):
+            return BRAND + title[len(legacy):]
+    return title
 
 
 @contextmanager
@@ -191,7 +206,7 @@ class Dialog:
 
         self.console = dialog.Dialog(dialog="dialog")
         self.console.add_persistent_args(["--no-collapse"])
-        self.console.add_persistent_args(["--backtitle", title])
+        self.console.add_persistent_args(["--backtitle", backtitle(title)])
         self.console.add_persistent_args(["--no-mouse"])
 
     def _handle_exitcode(self, retcode: str) -> bool:
