@@ -22,8 +22,15 @@ inithooks (2.3.6+keel17) trixie; urgency=medium
     the operator replace it. The images ship root locked; when root can
     already log in with a password at first boot, the password screen
     offers Keep first, as the default and the recommendation, with
-    Generate and Manual below it. Only passwd -S is asked, for the
-    status: the password and its hash are never read, printed or logged.
+    Generate and Manual below it. Only a password the image did not ship:
+    passwd -S must say it is usable, the image must carry its build date
+    (/etc/keel/build-date, from common's seal-root, which fails a build
+    whose root is not locked) and the password must have changed on or
+    after it, and the shadow field must be neither empty nor
+    U6aMy0wojraho, which older WordPress images shipped; a build with
+    ROOT_PASS, or an image without the date, gets no Keep. The field is
+    compared, never printed or logged. INITHOOKS_SHADOW and
+    INITHOOKS_BUILD_DATE point the tests at scratch files.
     Without such a password the screen is as before, a preseeded
     ROOT_PASS or a declared secrets.root_password still draws no screen,
     and keel-init still asks for a new one. Dialog.get_password() takes

@@ -68,8 +68,20 @@ EOF
     export INITHOOKS_COMPLETE=$ROOT/inithooks-complete
     export PYTHONPATH=$REPO${PYTHONPATH:+:$PYTHONPATH}
     export DIALOG_LOG=$ROOT/dialog.log
+    # an image built today, whose root got a password today, after it
+    export INITHOOKS_BUILD_DATE=$ROOT/build-date
+    export INITHOOKS_SHADOW=$ROOT/shadow
+    date -u +%F > "$INITHOOKS_BUILD_DATE"
+    shadow_root '$y$j9T$scratch$scratchhashscratchhash'
     export TERM=linux LINES=25 COLUMNS=80
     : > "$SCREEN"
+}
+
+# shadow_root FIELD
+# The scratch shadow file: root with FIELD, last changed today.
+shadow_root() {
+    printf 'root:%s:%d:0:99999:7:::\n' "$1" $(( $(date -u +%s) / 86400 )) \
+        > "$INITHOOKS_SHADOW"
 }
 
 # passwd_status STATUS
@@ -178,6 +190,21 @@ assert_next_screen() {
     # Keep was offered, and only Keep is recommended when it is
     grep -qa '(recommended)' "$SCREEN"
     [ ! -e "$ROOT/chpasswd" ]
+}
+
+@test "a password the image shipped is not offered to keep" {
+    # passwd -S says P for it all the same
+    passwd_status P
+    shadow_root 'U6aMy0wojraho'
+
+    run first_boot 'Choose' '\r' 'manager.' '\r' 'discard' '\r' \
+        'NEXT-SCREEN-SHOWN' ''
+
+    [ "$status" -eq 0 ]
+    assert_next_screen
+    [ "$(cat "$ROOT/chpasswd")" = root ]
+    run ! grep -qa 'U6aMy0wojraho' "$SCREEN" "$ROOT/inithooks.log" \
+        "$DIALOG_LOG"
 }
 
 @test "Generate below Keep replaces the password set at creation" {

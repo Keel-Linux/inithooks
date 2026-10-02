@@ -6,14 +6,24 @@ before, "really quit?" and Yes exited 0 without calling chpasswd, and
 is replaced at the subprocess boundary and records what it was given.
 
 A password set before the first boot, by `pct create --password` or by LXC
-in the root file system, is offered as Keep, first: passwd -S is replaced
-at the same boundary, and it is the only thing asked about that password,
-whose hash is never read.
+in the root file system, is offered as Keep, first, but only one the image
+did not ship: passwd -S must say it is usable, the image must carry its
+build date (/etc/keel/build-date, written by common's seal-root) and the
+password must have changed on or after it, and the shadow field must be
+neither empty nor a known placeholder. passwd -S is replaced at the
+subprocess boundary; the shadow file and the build date are scratch files.
+The field is compared, never printed or logged.
 """
 
+import datetime
 import importlib.util
+import io
+import logging
+import os
 import subprocess
+import tempfile
 import unittest
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from os.path import abspath, dirname, join
 from unittest import mock
 
@@ -27,12 +37,37 @@ USABLE = "root P 2026-10-02 0 99999 7 -1\n"
 LOCKED = "root L 2026-10-02 0 99999 7 -1\n"
 EMPTY = "root NP 2026-10-02 0 99999 7 -1\n"
 
+BUILT = datetime.date(2026, 10, 2)
+BUILD_DAY = (BUILT - datetime.date(1970, 1, 1)).days
+HASH = "$y$j9T$scratchsaltscratch$scratchhashscratchhashscratchhash12"
+PLACEHOLDER = "U6aMy0wojraho"
+
 
 def load_setpass():
     spec = importlib.util.spec_from_file_location("setpass", SETPASS)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@contextmanager
+def capture_logs():
+    """Every record logged meanwhile, at any level, as text"""
+    records: list[str] = []
+
+    class Keep(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    root = logging.getLogger()
+    handler, level = Keep(level=logging.DEBUG), root.level
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG)
+    try:
+        yield records
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(level)
 
 
 def passwd_answering(stdout: str = LOCKED, code: int = 0):
@@ -43,8 +78,43 @@ def passwd_answering(stdout: str = LOCKED, code: int = 0):
 
 
 class SetpassCase(unittest.TestCase):
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.dir = scratch.name
+        self.shadow = join(self.dir, "shadow")
+        self.build_date = join(self.dir, "build-date")
+        self.marker = join(self.dir, "container")
+        self.write_shadow()
+        self.write_build_date(BUILT.isoformat())
+        self.in_container(True)
+
+    def write_shadow(self, field=HASH, changed=BUILD_DAY + 1, user="root"):
+        """A shadow file whose USER entry has FIELD, last changed on day
+        CHANGED (an int, or the text of the field)"""
+        with open(self.shadow, "w") as fob:
+            fob.write("daemon:*:20000:0:99999:7:::\n")
+            fob.write(f"{user}:{field}:{changed}:0:99999:7:::\n")
+
+    def write_build_date(self, text):
+        with open(self.build_date, "w") as fob:
+            fob.write(text + "\n")
+
+    def in_container(self, yes):
+        if yes:
+            open(self.marker, "w").close()
+        elif os.path.exists(self.marker):
+            os.remove(self.marker)
+
+    def env(self, extra=None):
+        return {
+            "INITHOOKS_SHADOW": self.shadow,
+            "INITHOOKS_BUILD_DATE": self.build_date,
+            **(extra or {}),
+        }
+
     def run_setpass(self, *answers, status=LOCKED, argv=("root",),
-                    environ=None, container=True):
+                    environ=None):
         """Run setpass.py ARGV with the dialogs answering ANSWERS and
         passwd -S printing STATUS; return what chpasswd read ("" when it
         was not run), the console and the passwd -S stand-in"""
@@ -54,6 +124,7 @@ class SetpassCase(unittest.TestCase):
         chpasswd.return_value.communicate.return_value = (b"", b"")
         passwd = passwd_answering(status)
         stdin = mock.MagicMock(encoding="utf-8")
+        self.printed = io.StringIO()
         with (
             mock.patch.object(dw.dialog, "Dialog", return_value=console),
             mock.patch.object(setpass.subprocess, "Popen", chpasswd),
@@ -61,11 +132,18 @@ class SetpassCase(unittest.TestCase):
             mock.patch.object(setpass.signal, "signal"),
             mock.patch.object(setpass.sys, "argv", ["setpass.py", *argv]),
             mock.patch.object(setpass.sys, "stdin", stdin),
-            mock.patch.dict(setpass.os.environ, environ or {}, clear=True),
-            mock.patch.object(setpass.os.path, "exists",
-                              return_value=container),
+            mock.patch.dict(setpass.os.environ, self.env(environ),
+                            clear=True),
+            mock.patch.object(setpass, "CONTAINER_MARKER", self.marker),
+            redirect_stderr(self.printed),
+            redirect_stdout(self.printed),
+            capture_logs() as self.logged,
         ):
             setpass.main()
+        # whatever happened, the shadow field went nowhere
+        for said in (self.printed.getvalue(), *self.logged, console.shown()):
+            self.assertNotIn(HASH, said)
+            self.assertNotIn(PLACEHOLDER, said)
         if not chpasswd.called:
             return "", console, passwd
         chpasswd.assert_called_once()
@@ -155,22 +233,70 @@ class TestKeepThePasswordOfTheContainer(SetpassCase):
             with mock.patch.object(setpass.subprocess, "run", failure):
                 self.assertFalse(setpass.password_usable("root"))
 
-    def test_the_hash_is_never_asked_for(self):
-        # passwd -S prints the status; no other command, no file is read
+    def assert_not_offered(self):
+        _, console, _ = self.run_setpass(
+            (OK, "Generate"), OK, OK, status=USABLE
+        )
+        self.assertEqual(self.menu_tags(console), ["Generate", "Manual"])
+
+    # The image must not have shipped the password (review of #35): a
+    # build with ROOT_PASS, or an older WordPress image with the
+    # placeholder, has passwd -S say P all the same.
+
+    def test_a_password_changed_on_the_build_day_is_offered(self):
+        # common's seal-root fails a build whose root is not locked, so a
+        # usable password on a stamped image was set after it; a container
+        # created the day the image was built is the maintainer's case
+        self.write_shadow(changed=BUILD_DAY)
+        _, console, _ = self.run_setpass((OK, "Keep"), status=USABLE)
+        self.assertEqual(self.menu_tags(console)[0], "Keep")
+
+    def test_a_password_older_than_the_image_is_not_offered(self):
+        self.write_shadow(changed=BUILD_DAY - 1)
+        self.assert_not_offered()
+
+    def test_an_image_without_a_build_date_offers_nothing(self):
+        os.remove(self.build_date)
+        self.assert_not_offered()
+
+    def test_an_unreadable_build_date_offers_nothing(self):
+        self.write_build_date("yesterday")
+        self.assert_not_offered()
+
+    def test_the_placeholder_of_older_images_is_not_offered(self):
+        self.write_shadow(field=PLACEHOLDER)
+        self.assert_not_offered()
+
+    def test_an_empty_field_is_not_offered_whatever_passwd_says(self):
+        self.write_shadow(field="")
+        self.assert_not_offered()
+
+    def test_a_last_change_of_zero_or_none_is_not_offered(self):
+        for changed in (0, "", "x"):
+            with self.subTest(changed=changed):
+                self.write_shadow(changed=changed)
+                self.assert_not_offered()
+
+    def test_an_account_missing_from_shadow_is_not_offered(self):
+        self.write_shadow(user="someoneelse")
+        self.assert_not_offered()
+
+    def test_a_short_shadow_entry_is_not_offered(self):
+        with open(self.shadow, "w") as fob:
+            fob.write("root\n")
+        self.assert_not_offered()
+
+    def test_an_unreadable_shadow_file_is_not_offered(self):
+        os.remove(self.shadow)
+        self.assert_not_offered()
+
+    def test_the_build_date_is_read_as_utc_days(self):
         setpass = load_setpass()
-        passwd = passwd_answering(USABLE)
-        with (
-            mock.patch.object(setpass.subprocess, "run", passwd),
-            mock.patch("builtins.open") as opened,
-        ):
-            self.assertTrue(setpass.password_usable("root"))
-        opened.assert_not_called()
-        self.assertEqual(passwd.call_args.args[0], ["passwd", "-S", "root"])
+        self.assertEqual(setpass.build_day(self.build_date), BUILD_DAY)
 
     def test_outside_a_container_keep_names_this_machine(self):
-        _, console, _ = self.run_setpass(
-            (OK, "Keep"), status=USABLE, container=False
-        )
+        self.in_container(False)
+        _, console, _ = self.run_setpass((OK, "Keep"), status=USABLE)
         keep = console.calls[0][3]["choices"][0][1]
         self.assertNotIn("container", keep)
         self.assertIn("already set on this machine", keep)
@@ -203,8 +329,10 @@ class TestKeepThePasswordOfTheContainer(SetpassCase):
         passwd.assert_not_called()
 
     def test_the_admin_account_is_asked_about_itself(self):
-        _, _, passwd = self.run_setpass((OK, "Keep"), status=USABLE,
-                                        argv=("admin",))
+        self.write_shadow(user="admin")
+        _, console, passwd = self.run_setpass((OK, "Keep"), status=USABLE,
+                                              argv=("admin",))
+        self.assertEqual(self.menu_tags(console)[0], "Keep")
         self.assertEqual(passwd.call_args.args[0], ["passwd", "-S", "admin"])
 
 
