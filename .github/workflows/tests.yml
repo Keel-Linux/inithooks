@@ -18,8 +18,10 @@ jobs:
     with:
       threshold: 98
       # tests/test-packaging.bats runs debhelper over debian/ and reads the
-      # maintainer scripts it generates; in CI a missing debhelper fails it
-      apt-packages: debhelper
+      # maintainer scripts it generates, and tests/test-firstboot-pty.bats
+      # runs the first boot screens with the real dialog; in CI a missing
+      # package fails them
+      apt-packages: debhelper dialog python3-dialog
   python:
     uses: keel-linux/.github/.github/workflows/test-python.yml@main
     with:

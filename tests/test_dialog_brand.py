@@ -29,11 +29,13 @@ SHOWN = [
 ]
 # Strings that name TurnKey and stay: a command name kept for
 # compatibility (the error text tells the operator to run it, and it is
-# what is installed), and the host the update screen checks it can reach,
-# which it never shows.
+# what is installed), the host the update screen checks it can reach, and
+# the variable keel-init sets for the hooks (setpass.py reads it), neither
+# of which is ever shown.
 ALLOWED = {
     "turnkey-install-security-updates",
     "archive.turnkeylinux.org",
+    "_TURNKEY_INIT",
 }
 FIRST_BOOT = "Keel Linux - First boot configuration"
 

@@ -267,3 +267,128 @@ PROBE
     [ "$status" -eq 0 ]
     [ -e "$INITHOOKS_COMPLETE" ]
 }
+
+# The silent gaps of a first boot (2026-10-02, a Web container on Proxmox
+# VE: the console stayed on "Did you save the password?" after <Saved>
+# until the next screen came). Before each hook from 30 on, run waited up
+# to 10 s for a system still starting, without a word on the screen: 30 s
+# before the Keel Cloud screen alone, more on a slow host.
+
+@test "a starting system is waited for once, not before every hook" {
+    stub systemctl 'echo starting'
+    probe 30first
+    probe 75second
+    probe 80third
+
+    run_runner
+
+    [ "$status" -eq 0 ]
+    [ "$(wc -l < "$SEEN")" -eq 3 ]
+    # one second at a time (the 2 s before confconsole is not a wait)
+    [ "$(calls sleep | grep -cx 1)" -eq 10 ]
+}
+
+@test "the wait ends as soon as the system is running" {
+    # starting for the first two questions, running from the third on
+    stub systemctl "n=\$(wc -l < '$STUBS/systemctl.calls')
+if (( n <= 2 )); then echo starting; else echo running; fi"
+    probe 30first
+    probe 75second
+
+    run_runner
+
+    [ "$status" -eq 0 ]
+    [ "$(calls sleep | grep -cx 1)" -eq 1 ]
+    # the log line, then one question per second waited
+    [ "$(calls systemctl | wc -l)" -le 4 ]
+}
+
+# run_on_terminal
+# The runner with a terminal for its standard output, the way
+# inithooks.service gives it tty1.
+run_on_terminal() {
+    INITHOOKS_DEFAULT=$DEFAULT run script -qec "$BATS_TEST_DIRNAME/../run" \
+        /dev/null < /dev/null
+}
+
+@test "each first boot hook is named on the terminal while it runs" {
+    stub dialog
+    probe 15regen-sslcert
+    probe 75keel-role
+
+    run_on_terminal
+
+    [ "$status" -eq 0 ]
+    grep -q -- '--infobox Configuring regen-sslcert... please wait' \
+        "$STUBS/dialog.calls"
+    grep -q -- '--infobox Configuring keel-role... please wait' \
+        "$STUBS/dialog.calls"
+    grep -q -- '--backtitle Keel Linux - First boot configuration' \
+        "$STUBS/dialog.calls"
+}
+
+@test "the wait for a starting system is shown on the terminal" {
+    stub dialog
+    stub systemctl 'echo starting'
+    probe 30first
+
+    run_on_terminal
+
+    [ "$status" -eq 0 ]
+    grep -q -- '--infobox Waiting for the system to finish starting' \
+        "$STUBS/dialog.calls"
+}
+
+@test "nothing is drawn when the output is not a terminal" {
+    stub dialog
+    stub systemctl 'echo starting'
+    probe 30first
+
+    run_runner
+
+    [ "$status" -eq 0 ]
+    [ -z "$(calls dialog)" ]
+}
+
+@test "a run whose output goes to the log draws nothing either" {
+    sed -i 's/REDIRECT_OUTPUT=false/REDIRECT_OUTPUT=true/' "$DEFAULT"
+    # the xen marker: the log is sent to the console by another service,
+    # so this run starts no tail of its own
+    mkdir -p "$ROOT/turnkey-info"
+    touch "$ROOT/turnkey-info/xen"
+    echo "TKLINFO=$ROOT/turnkey-info" >> "$DEFAULT"
+    stub dialog
+    probe 30first
+
+    run_on_terminal
+
+    [ "$status" -eq 0 ]
+    [ -z "$(calls dialog)" ]
+}
+
+@test "everyboot hooks are not announced" {
+    stub dialog
+    mkdir -p "$LIB/everyboot.d"
+    cat > "$LIB/everyboot.d/01quiet" <<PROBE
+#!/bin/bash
+true
+PROBE
+    chmod +x "$LIB/everyboot.d/01quiet"
+
+    run_on_terminal
+
+    [ "$status" -eq 0 ]
+    [ -z "$(calls dialog)" ]
+}
+
+@test "a notice dialog cannot draw does not stop the run" {
+    stub dialog 'echo "Error opening terminal: unknown." >&2; exit 255'
+    probe 15first
+    probe 30second
+
+    run_on_terminal
+
+    [ "$status" -eq 0 ]
+    [ "$(wc -l < "$SEEN")" -eq 2 ]
+    [[ "$output" != *"Error opening terminal"* ]]
+}

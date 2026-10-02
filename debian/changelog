@@ -1,3 +1,55 @@
+inithooks (2.3.6+keel17) trixie; urgency=medium
+
+  * The console no longer looks frozen between first boot screens. On a
+    Proxmox VE container the maintainer pressed <Saved> on "Did you save
+    the password?" and the screen stayed on it until the Keel Cloud
+    screen came. Nothing hung: what ran in between drew nothing. Measured
+    on an LXC container from the step8 Web image, the gap is 2 s, and
+    15 s with a quarter of a CPU: the boot wait ran before every hook from
+    30 on, asking systemctl eleven times each and sleeping up to 10 s per
+    hook while the system was still starting, then 75keel-role ran keel
+    inspect. run now waits for a starting system once per run, stops
+    waiting as soon as it is up, and says so on the screen. Each first
+    boot hook is named on the screen while it runs ("Configuring
+    keel-role... please wait"), in a box with the first boot backtitle,
+    so a step that works without a screen of its own never leaves the
+    last one up. Nothing is drawn when the output is not a terminal or
+    goes to the log (REDIRECT_OUTPUT), and a notice that cannot be drawn
+    is not an error.
+  * A root password set when the container was created is kept if the
+    operator wants. pct create --password (or LXC writing /etc/shadow
+    before the first boot) gave root a password, and the first boot made
+    the operator replace it. The images ship root locked; when root can
+    already log in with a password at first boot, the password screen
+    offers Keep first, as the default and the recommendation, with
+    Generate and Manual below it. Only a password the image did not ship:
+    passwd -S must say it is usable, the image must carry its build date
+    (/etc/keel/build-date, from common's seal-root, which fails a build
+    whose root is not locked) and the password must have changed on or
+    after it, and the shadow field must be neither empty nor
+    U6aMy0wojraho, which older WordPress images shipped; a build with
+    ROOT_PASS, or an image without the date, gets no Keep. The field is
+    compared, never printed or logged. INITHOOKS_SHADOW and
+    INITHOOKS_BUILD_DATE point the tests at scratch files.
+    Without such a password the screen is as before, a preseeded
+    ROOT_PASS or a declared secrets.root_password still draws no screen,
+    and keel-init still asks for a new one. Dialog.get_password() takes
+    keep, the description of the Keep entry, and returns None when it is
+    chosen; a menu is drawn wide enough for its longest entry, up to 76
+    columns. 30rootpass reads INITHOOKS_DEFAULT like the other hooks.
+  * tests/test-firstboot-pty.bats runs run, the real 30rootpass,
+    setpass.py and dialog on a pty under script, typing each key when its
+    screen has reached the pty, with a timeout on the whole run: Generate
+    then Saved, New, Manual, Keep, Generate below Keep and a preseeded
+    password each go on to the next hook's screen. A run that stops
+    answering fails it, and so does a screen drawn into a pipe, which
+    never reaches the pty. CI installs dialog and python3-dialog for it.
+    DIALOG_LOG names the file dialog_wrapper logs to (default
+    /var/log/dialog.log), so the test runs as a user who cannot write
+    /var/log.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Fri, 02 Oct 2026 16:00:00 +0000
+
 inithooks (2.3.6+keel16) trixie; urgency=medium
 
   * A generated password is shown on one screen only. The screen that shows

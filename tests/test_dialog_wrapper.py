@@ -291,6 +291,77 @@ class TestGetPasswordGenerate(unittest.TestCase):
         self.assertEqual(d.console.calls[1][3]["title"], "Error")
 
 
+KEEP = (OK, "Keep")
+KEEP_TEXT = "Password set when the container was created (recommended)"
+
+
+class TestGetPasswordKeep(unittest.TestCase):
+    def test_keep_is_offered_first_and_is_the_only_recommendation(self):
+        d = dialog(KEEP)
+        d.get_password("Root Password", "text", keep=KEEP_TEXT)
+        _, _, _, kwargs = d.console.calls[0]
+        tags = [tag for tag, _ in kwargs["choices"]]
+        self.assertEqual(tags, ["Keep", "Generate", "Manual"])
+        self.assertEqual(kwargs["choices"][0][1], KEEP_TEXT)
+        recommended = [tag for tag, info in kwargs["choices"]
+                       if "recommended" in info]
+        self.assertEqual(recommended, ["Keep"])
+
+    def test_the_menu_is_wide_enough_for_keep_on_an_80_column_console(self):
+        d = dialog(KEEP)
+        d.get_password("t", "x", keep=KEEP_TEXT)
+        _, _, args, _ = d.console.calls[0]
+        width = args[1]
+        # nothing cut off: the description, the tag column and the margin
+        self.assertEqual(
+            width, len(KEEP_TEXT) + len("Generate") + dw.MENU_MARGIN
+        )
+        self.assertLessEqual(width, dw.MENU_MAX_WIDTH)
+
+    def test_the_menu_keeps_its_width_without_keep(self):
+        d = dialog(GENERATE, OK, OK)
+        d.get_password("t", "x")
+        self.assertEqual(d.console.calls[0][2][1], d.width)
+
+    def test_a_menu_wider_than_the_console_is_capped(self):
+        d = dialog((OK, "a"))
+        d.menu("t", "x", [("a", "y" * 200)])
+        self.assertEqual(d.console.calls[0][2][1], dw.MENU_MAX_WIDTH)
+
+    def test_keep_returns_none_and_asks_nothing_else(self):
+        d = dialog(KEEP)
+        self.assertIsNone(d.get_password("t", "x", keep=KEEP_TEXT))
+        self.assertEqual(d.console.widgets(), ["menu"])
+
+    def test_generate_below_keep_still_shows_and_confirms(self):
+        d = dialog(GENERATE, OK, OK)
+        password = d.get_password("t", "x", keep=KEEP_TEXT)
+        self.assertEqual(len(password), 20)
+        self.assertEqual(d.console.widgets(), ["menu", "msgbox", "yesno"])
+
+    def test_manual_below_keep_is_the_password_box(self):
+        d = dialog(MANUAL, (OK, "Abcdefg1"), (OK, "Abcdefg1"))
+        self.assertEqual(d.get_password("t", "x", keep=KEEP_TEXT), "Abcdefg1")
+
+    def test_escape_on_the_menu_with_keep_shows_it_again(self):
+        d = dialog((ESC, ""), KEEP)
+        self.assertIsNone(d.get_password("t", "x", keep=KEEP_TEXT))
+        self.assertEqual(d.console.widgets(), ["menu", "menu"])
+
+    def test_no_keep_without_a_description(self):
+        d = dialog(GENERATE, OK, OK)
+        d.get_password("t", "x")
+        tags = [tag for tag, _ in d.console.calls[0][3]["choices"]]
+        self.assertEqual(tags, ["Generate", "Manual"])
+
+    def test_keep_without_the_menu_is_refused(self):
+        # offer_generate=False is the password box alone: there is no menu
+        # to put Keep on, and a caller asking for both is told so
+        with self.assertRaises(ValueError):
+            dialog().get_password("t", "x", offer_generate=False,
+                                  keep=KEEP_TEXT)
+
+
 class TestGetPasswordManual(unittest.TestCase):
     def test_manual_is_the_old_prompt_twice(self):
         d = dialog(MANUAL, (OK, "Abcdefg1"), (OK, "Abcdefg1"))

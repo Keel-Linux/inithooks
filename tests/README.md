@@ -13,6 +13,12 @@
   the package would carry, for one that `keel-host-keys.service` is enabled
   by the generated postinst. Needs `debhelper`; skipped without it, except
   in CI.
+- `test-firstboot-pty.bats`: the first boot on a pty under `script`: `run`,
+  the real `30rootpass`, `setpass.py` and `dialog`, keys typed when their
+  screen is on the pty, and a timeout on the whole run. It fails on a run
+  that stops answering and on a screen drawn into a pipe, which never
+  reaches the pty. Only `chpasswd` and `passwd` are stubs. Needs `dialog`
+  and `python3-dialog`; skipped without them, except in CI.
 - `helpers.bash`: the stub helpers (`setup_stubs`, `stub`, `calls`), and
   `eventually` and `let_go` for tests that wait on another process.
 - `test_init_lock.py`: pytest tests of the first boot lock
