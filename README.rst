@@ -525,8 +525,10 @@ Notes:
       variables read by 01ipconfig; static IPv6 addresses cannot be written
       to /etc/network/interfaces yet and are refused.
 
-    - tls.acme is accepted and validated, but no certificate is requested
-      yet; use confconsole for that.
+    - tls.acme is accepted and validated (enabled, challenge, domains,
+      agree_tos, as the instance tooling reads them), but no certificate is
+      requested at first boot; keel spec apply --system and confconsole's
+      Let's Encrypt screen request it.
 
 The description can be validated before it is used::
 
@@ -576,6 +578,7 @@ Common to all appliances::
     15regen-sslcert         DH_BITS                 [ 1024 | 2048 | 4096 ]
     29preseed               INITFENCE               [ SKIP ]
     30rootpass*             ROOT_PASS
+    31fqdn                  FQDN                    [ SKIP | the name ]
     75keel-role             database.server.role of the instance description
     80keel-cloud            HUB_APIKEY              [ SKIP | the key ]
     85secalerts             SEC_ALERTS              [ SKIP ]
@@ -584,6 +587,34 @@ Common to all appliances::
 
 
 Notes on the Keel hooks:
+
+    - 31fqdn asks the machine's fully qualified domain name,
+      blog.example.org, prefilled with the name the machine has (what
+      "pct create --hostname" set; a dotted name is offered as it is).
+      The instance description (/etc/keel/instance.yaml, or the file
+      00declarative read) records instance.hostname and instance.fqdn,
+      plus tls.acme.domains: [the name] when it declares no domain yet,
+      so confconsole's Let's Encrypt screen offers it; tls.acme.enabled
+      is never touched, a hostname declared beside the unchanged name is
+      kept, and a description the answer does not change is not
+      rewritten. Then the first label becomes the hostname, set the way
+      09hostname sets it (lib/hostname.sh: the old name replaced as a
+      whole name or a first label, never inside another word), and
+      /etc/hosts gets the entry that makes "hostname -f" answer the name,
+      rewriting the line a container manager wrote for the host where it
+      stands. The description comes first so that a step that fails
+      leaves a description saying what the machine should be. A name
+      without a domain is kept as the hostname alone, after a notice that
+      no certificate can be requested without a domain; an empty answer
+      keeps what the machine has. Lower case labels of letters, digits
+      and dashes, as a domain name is written; anything else is refused
+      and asked again. FQDN preseeds the answer (instance.fqdn of the
+      description renders it, so a described machine is not asked);
+      FQDN=SKIP asks nothing and changes nothing. keel-init asks again,
+      prefilled with the fqdn the description declares. The description
+      is written as confconsole writes it: a copy beside the file,
+      checked by "keel spec validate --no-secret-files" when keel is
+      installed, then moved into place; keel has no writer of its own.
 
     - 75keel-role and 80keel-cloud (handbook decision 0020) run
       confconsole's first boot screens, /usr/lib/confconsole/keelfirstboot.py,

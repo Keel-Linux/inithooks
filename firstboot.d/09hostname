@@ -1,32 +1,22 @@
 #!/bin/bash -e
 # set hostname
+# HOSTNAME: the name (if none specified, nothing is done)
+#
+# The rename itself is lib/hostname.sh, shared with 31fqdn.
 
-. /etc/default/inithooks
+INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
+# shellcheck source=default/inithooks
+source "$INITHOOKS_DEFAULT"
+# shellcheck source=lib/hostname.sh
+source "$INITHOOKS_PATH/lib/hostname.sh"
 
-[ -e $INITHOOKS_CONF ] && . $INITHOOKS_CONF
+if [[ -e "$INITHOOKS_CONF" ]]; then
+    # shellcheck source=/dev/null
+    source "$INITHOOKS_CONF"
+fi
 
-[ -z "$HOSTNAME" ] && exit 0
+[[ -z "$HOSTNAME" ]] && exit 0
 
-old=$(hostname)
-
-for file in \
-   /etc/exim4/update-exim4.conf.conf \
-   /etc/printcap \
-   /etc/hostname \
-   /etc/hosts \
-   /etc/network/interfaces \
-   /etc/ssh/ssh_host_rsa_key.pub \
-   /etc/ssh/ssh_host_dsa_key.pub \
-   /etc/ssh/ssh_host_ecdsa_key.pub \
-   /etc/ssh/ssh_host_ed25519_key.pub \
-   /etc/mailname \
-   /etc/postfix/main.cf \
-   /etc/motd \
-   /etc/ssmtp/ssmtp.conf
-do
-   [ -f $file ] && sed -i -e "s:$old:$HOSTNAME:g" $file
-done
-
-hostname $HOSTNAME
+hostname_set "$HOSTNAME"
 
 exit 0

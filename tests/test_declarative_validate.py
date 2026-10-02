@@ -328,10 +328,22 @@ class TestTLS(unittest.TestCase):
         text = self.acme(
             "    enabled: true\n"
             "    challenge: http-01\n"
+            "    agree_tos: true\n"
             "    domains:\n"
             "      - blog.example.org\n"
         )
         self.assertEqual(errors(text), [])
+
+    def test_enabled_and_agree_tos_must_be_true_or_false(self):
+        # the instance tooling accepts both as booleans (keel docs/spec.md)
+        messages(
+            self.acme("    enabled: yes please\n"),
+            "tls.acme.enabled: must be true or false",
+        )
+        messages(
+            self.acme("    agree_tos: 1\n"),
+            "tls.acme.agree_tos: must be true or false",
+        )
 
 
 class TestPreseed(unittest.TestCase):

@@ -1,3 +1,41 @@
+inithooks (2.3.6+keel19) trixie; urgency=medium
+
+  * The first boot asks the machine's fully qualified domain name, in a
+    new hook, 31fqdn, after the root password and before the application
+    hooks. The box is prefilled with the name the machine has (what pct
+    create --hostname set; a dotted name as it is). The instance
+    description records instance.hostname and instance.fqdn, plus
+    tls.acme.domains with the name when it declares no domain yet, so
+    confconsole's Let's Encrypt screen is driven by the description;
+    tls.acme.enabled is never touched, a hostname declared beside the
+    unchanged name is kept, and a description the answer does not change
+    is not rewritten. Then the first label becomes the hostname, set the
+    way 09hostname sets it (the rename is now lib/hostname.sh, which
+    both hooks source), and /etc/hosts gets the entry that makes
+    hostname -f answer the name, rewriting the line pct wrote for the
+    host where it stands. The description first, so that a step that
+    fails leaves one saying what the machine should be. A name without a
+    domain is kept as the hostname alone, after a notice that no
+    certificate can be requested without a domain; an empty answer keeps
+    what the machine has. Lower case labels of letters, digits and
+    dashes; anything else is refused and asked again. FQDN preseeds it
+    (instance.fqdn renders it, so a described machine is not asked),
+    FQDN=SKIP asks nothing.
+  * The description is written as confconsole writes it (keelcli.py):
+    PyYAML, a copy beside the file, keel spec validate --no-secret-files
+    when keel is installed, then moved into place, with the mode the
+    file had. keel has no writer of its own.
+  * The rename replaces the old name only as a whole name or as the
+    first label of a dotted name, matched literally. 09hostname's sed
+    took it as a pattern: a machine called web was rewritten inside
+    every SSH key comment, postfix setting and word of /etc/hosts that
+    contained it, and a colon in the name broke the command.
+  * The reader accepts tls.acme.agree_tos, which the instance tooling
+    accepts, and refuses enabled or agree_tos that are not booleans.
+  * 09hostname reads INITHOOKS_DEFAULT like the other Keel hooks.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Fri, 02 Oct 2026 21:00:00 +0000
+
 inithooks (2.3.6+keel18) trixie; urgency=medium
 
   * 95secupdates reads its updates from
