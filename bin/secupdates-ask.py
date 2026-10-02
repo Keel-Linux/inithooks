@@ -12,8 +12,7 @@ from libinithooks.dialog_wrapper import Dialog
 
 TEXT = (
     "By default, this system is configured to automatically install security"
-    "  updates on a daily basis:\n\n"
-    "https://www.turnkeylinux.org/security-updates\n\n"
+    " updates on a daily basis.\n\n"
     "For maximum protection, we also recommend installing the latest security"
     " updates right now.\n\n"
     "This can take a few minutes. You need to be online."
@@ -46,7 +45,7 @@ def main():
         if opt in ("-h", "--help"):
             usage()
 
-    d = Dialog("TurnKey GNU/Linux - First boot configuration")
+    d = Dialog("Keel Linux - First boot configuration")
     install = d.yesno("Security updates", TEXT, "Install", "Skip")
     logging.debug(f"secupdates.main()\n\tinstall:`{install}'\n")
     if not install:

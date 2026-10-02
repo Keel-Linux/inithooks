@@ -123,7 +123,7 @@ inherit() {
 @test "remote_tokens ignores links and page text" {
     run remote_tokens "$EXPECTED"
     [ -z "$output" ]
-    grep -q 'href="https://www.turnkeylinux.org' "$EXPECTED"
+    grep -q 'href="https://keellinux.org/' "$EXPECTED"
 }
 
 # ------------------------------------------------- the pages that are served

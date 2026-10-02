@@ -125,3 +125,42 @@ packaged_scripts() {
         }
     done
 }
+
+# prepare_postinst: the packaged postinst, with every command it calls
+# stubbed, against a scratch hourly cron directory (CRON_HOURLY). The script
+# names /etc/cron.hourly literally; the copy run here has that one path
+# pointed at the scratch directory, nothing else changed.
+prepare_postinst() {
+    packaged_scripts
+    load helpers
+    setup_stubs
+    local cmd
+    for cmd in systemctl chmod deb-systemd-helper deb-systemd-invoke \
+        py3compile pypy3compile dpkg-maintscript-helper; do
+        stub "$cmd"
+    done
+    CRON_HOURLY=$BATS_TEST_TMPDIR/etc/cron.hourly
+    mkdir -p "$CRON_HOURLY"
+    sed "s|/etc/cron.hourly/|$CRON_HOURLY/|g" "$DEBIAN/postinst" \
+        > "$BATS_TEST_TMPDIR/postinst"
+}
+
+# The first boot of an older inithooks left a cron job that posts the
+# operator's email address to the TurnKey Hub every hour until it gets an
+# answer; an upgrade has to stop it, not only stop creating it.
+@test "an upgrade removes the job that posted the alert address to the TurnKey Hub" {
+    prepare_postinst
+    echo '#!/bin/bash -e' > "$CRON_HOURLY/enable_secalerts"
+    touch "$CRON_HOURLY/other-job"
+    run sh "$BATS_TEST_TMPDIR/postinst" configure 2.3.6+keel14
+    [ "$status" -eq 0 ]
+    [ ! -e "$CRON_HOURLY/enable_secalerts" ]
+    [ -e "$CRON_HOURLY/other-job" ]
+}
+
+@test "a system that never had the job installs cleanly" {
+    prepare_postinst
+    run sh "$BATS_TEST_TMPDIR/postinst" configure
+    [ "$status" -eq 0 ]
+    [ ! -e "$CRON_HOURLY/enable_secalerts" ]
+}
