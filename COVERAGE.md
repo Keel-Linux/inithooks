@@ -4,6 +4,19 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/password-once-and-updates-record: shell 99.58, Python 99 (2026-10-02)
+
+`firstboot.d/95secupdates` is measured for the first time: 49 of 50
+lines, 98 percent, from 9 tests in `tests/test-secupdates.bats` (preseeded
+SKIP and FORCE, Skip and Install on the screen, a failing screen, an
+invalid preseed, a record that cannot be written, dpkg in an inconsistent
+state with a new kernel arming 99reboot, no conf file). The line not run
+is the TurnKey Hub status call, for a machine registered with the Hub.
+Shell total 99.58, down from 99.76 only because a file under 100 percent
+joined the measured set. Python: `libinithooks/dialog_wrapper.py`
+unchanged at 98 percent (the same two lines missed as before), 373 tests;
+total 99 percent.
+
 ## Branch feat/first-boot-role: shell 99.76, Python 99 (2026-09-30)
 
 `lib/keel-firstboot.sh` 8/8, `firstboot.d/75keel-role` 4/4 and

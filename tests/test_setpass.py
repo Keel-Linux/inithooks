@@ -64,7 +64,9 @@ class TestSetpass(unittest.TestCase):
         user, _, password = given.partition(":")
         self.assertEqual(user, "root")
         self.assertEqual(len(password), dw.GENERATED_LENGTH)
-        self.assertIn(password, console.calls[-1][1])
+        # shown on the message, never on the question that follows it
+        self.assertIn(password, console.calls[3][1])
+        self.assertNotIn(password, console.calls[-1][1])
         self.assertEqual(
             console.widgets(),
             ["menu", "menu", "msgbox", "msgbox", "yesno", "yesno"],

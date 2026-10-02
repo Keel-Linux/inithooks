@@ -1,3 +1,25 @@
+inithooks (2.3.6+keel15) trixie; urgency=medium
+
+  * A generated password is shown on one screen only. The screen that shows
+    it says "It is not shown again", and the question after it, "Did you
+    save this password?", showed it again, so the first screen's word was
+    not true. The question now asks "Did you save the password?" without
+    it; an operator who did not save it answers New and gets another one,
+    shown once as well. Found in the maintainer's screenshots of the Core
+    image (002 and 003), 2026-10-02.
+  * 95secupdates leaves its answer behind: skip or force, one line in
+    /var/lib/inithooks/sec-updates, preseeded or asked. Nothing else on the
+    machine records it (the cron-apt install action every image ships looks
+    the same either way), so keel inspect reported
+    security.updates_at_first_boot as force after the operator chose Skip
+    (screenshot 034); keel 0.15.1 reads this line. A line that cannot be
+    written is logged and the boot goes on. The hook takes
+    INITHOOKS_DEFAULT, SEC_UPDATES_RECORD and SEC_UPDATES_LOG from the
+    environment, for tests/test-secupdates.bats, its first tests (98
+    percent of its lines under kcov).
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Fri, 02 Oct 2026 06:00:00 +0000
+
 inithooks (2.3.6+keel14) trixie; urgency=medium
 
   * keel-host-keys.service is enabled. debian/postinst had no #DEBHELPER#
