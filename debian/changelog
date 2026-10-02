@@ -37,6 +37,9 @@ inithooks (2.3.6+keel17) trixie; urgency=medium
     password each go on to the next hook's screen. A run that stops
     answering fails it, and so does a screen drawn into a pipe, which
     never reaches the pty. CI installs dialog and python3-dialog for it.
+    DIALOG_LOG names the file dialog_wrapper logs to (default
+    /var/log/dialog.log), so the test runs as a user who cannot write
+    /var/log.
 
  -- Marcos Mendez <mendez.foto@gmail.com>  Fri, 02 Oct 2026 16:00:00 +0000
 
