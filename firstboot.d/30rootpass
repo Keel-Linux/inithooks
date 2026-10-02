@@ -1,11 +1,18 @@
 #!/bin/bash -e
 # set root password
+#
+# ROOT_PASS preseeded (or rendered from secrets.root_password by
+# 00declarative) sets it without a screen. Otherwise setpass.py asks, and
+# offers to keep a password set before the first boot (pct create
+# --password, or LXC in the root file system) when there is one.
 
 USERNAME=root
 
-. /etc/default/inithooks
-[ "$(echo $SUDOADMIN | tr [A-Z] [a-z] )" = "true" ] && USERNAME=admin
+INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
+# shellcheck source=default/inithooks
+. "$INITHOOKS_DEFAULT"
+[ "$(echo "$SUDOADMIN" | tr '[:upper:]' '[:lower:]')" = "true" ] && USERNAME="admin"
 
-[ -e $INITHOOKS_CONF ] && . $INITHOOKS_CONF
-$INITHOOKS_PATH/bin/setpass.py $USERNAME --pass="$ROOT_PASS"
-
+# shellcheck disable=SC1090
+[ -e "$INITHOOKS_CONF" ] && . "$INITHOOKS_CONF"
+"$INITHOOKS_PATH/bin/setpass.py" "$USERNAME" --pass="$ROOT_PASS"

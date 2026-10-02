@@ -44,15 +44,40 @@ mkdir -p "$(dirname "$INITHOOKS_LOGFILE")"
 touch "$INITHOOKS_LOGFILE"
 chmod 640 "$INITHOOKS_LOGFILE"
 
+# The back title of the first boot screens (libinithooks/dialog_wrapper.py,
+# BRAND), on the notices below as well.
+FIRSTBOOT_TITLE="Keel Linux - First boot configuration"
+BOOT_WAITED=
+
+# notice TEXT
+# Shows TEXT in a box on the terminal the hooks draw on, and goes on: the
+# screen of the hook before stays up otherwise, and it looks frozen while a
+# hook works or the boot is waited for (2026-10-02, a Proxmox console left
+# on "Did you save the password?" after <Saved>). Nothing is drawn when the
+# output is not a terminal or goes to the log (REDIRECT_OUTPUT), and a
+# notice that cannot be drawn is not an error.
+notice() {
+    [[ -t 1 ]] && [[ "$REDIRECT_OUTPUT" != "true" ]] || return 0
+    dialog --backtitle "$FIRSTBOOT_TITLE" --infobox "$1" 5 60 2>/dev/null \
+        || true
+}
+
 wait_for_boot() {
     # wait up to 10 secs for system to be running before starting; minimizes chance
-    # of journal overwriting inithook dialog/confconsole
+    # of journal overwriting inithook dialog/confconsole. Once per run: the
+    # wait was before every hook from 30 on, 10 s each on a system still
+    # starting, with nothing on the screen.
+    [[ -z "$BOOT_WAITED" ]] || return 0
+    BOOT_WAITED=true
+    local count
     logger -t inithooks "systemctl is-system-running: $(systemctl is-system-running)"
     for count in {1..10}; do
-        if [[ "$(systemctl is-system-running)" == "starting" ]]; then
-            logger -t inithooks "Waiting for boot to finish ($count/10 seconds)"
-            sleep 1
+        if [[ "$(systemctl is-system-running)" != "starting" ]]; then
+            return 0
         fi
+        logger -t inithooks "Waiting for boot to finish ($count/10 seconds)"
+        notice "Waiting for the system to finish starting... please wait ($count/10 s)"
+        sleep 1
     done
 }
 
@@ -110,6 +135,11 @@ exec_scripts() {
             continue
         fi
         log info "[$script] running"
+        if [[ -n "$firstboot" ]] && [[ "$script" =~ ^[0-9]*(.+)$ ]]; then
+            # until the hook draws its own screen, or for as long as it
+            # works without one
+            notice "Configuring ${BASH_REMATCH[1]}... please wait"
+        fi
         # the hook does not get the lock's descriptor: see lib/init-lock.sh
         "$script_executable" {INIT_LOCK_FD}>&-
         exit_code=$?

@@ -61,6 +61,14 @@ PASSWORD_ALPHABET = (
     PASSWORD_UPPER + PASSWORD_LOWER + PASSWORD_DIGITS + PASSWORD_SYMBOLS
 )
 GENERATED_LENGTH = 20
+# The menu tag of get_password(keep=...): the account keeps its password.
+KEEP = "Keep"
+# Columns a menu box takes besides its longest tag and description, and the
+# widest box drawn, which an 80 column console shows whole (measured with
+# dialog 1.3 on tty1 of an LXC container: a box 76 wide shows 58 columns of
+# description beside an 8 column tag).
+MENU_MARGIN = 10
+MENU_MAX_WIDTH = 76
 GENERATED_MIN_LENGTH = 12
 # Generated candidates tried against the caller's rules before the operator
 # is asked to type a password instead (a pass_req regex can refuse them all).
@@ -386,12 +394,17 @@ class Dialog:
         """Titled message with single choice of options & 'ok' button.
         choices is a list of options, each a tuple of the option tag and
         its short description: [(opt1, opt1_info), (opt2, opt2_info)]
+        The box is self.width wide, wider when an option needs it, up to
+        MENU_MAX_WIDTH, so that no description is cut off.
         Returns the selected option tag - e.g. 'opt1'"""
+        needed = MENU_MARGIN + max(len(tag) for tag, _ in choices) + max(
+            len(info) for _, info in choices
+        )
         _, choice = self.wrapper(  # return_code, choice
             "menu",
             text,
             self.height,
-            self.width,
+            max(self.width, min(needed, MENU_MAX_WIDTH)),
             menu_height=len(choices) + 1,
             title=title,
             choices=choices,
@@ -408,16 +421,21 @@ class Dialog:
         blacklist: list[str] | None = None,
         offer_generate: bool = True,
         gen_length: int = GENERATED_LENGTH,
+        keep: str = "",
     ) -> str | None:
-        """Validated password, generated or typed.
+        """Validated password, generated or typed; None when kept.
 
         When offer_generate is True (the default), a menu comes first:
-          - Generate (recommended): a random password (generate_password),
-            shown to the operator, who must confirm it was saved; 'New'
-            discards it and shows another.
+          - Keep, only when KEEP is given: the password the account has
+            already, which KEEP describes. It is first, the default and
+            the recommendation, and choosing it returns None.
+          - Generate (recommended without Keep): a random password
+            (generate_password), shown to the operator, who must confirm
+            it was saved; 'New' discards it and shows another.
           - Manual: the password box below.
         Existing callers get the menu without any change. Pass
-        offer_generate=False for the password box alone, as before.
+        offer_generate=False for the password box alone, as before; Keep
+        needs the menu, and asking for both raises ValueError.
 
         The generated password satisfies the same rules as a typed one
         (pass_req, min_complexity, blacklist): it is gen_length characters
@@ -428,7 +446,9 @@ class Dialog:
 
         ESC never skips the password: every dialog of it is shown again.
 
-        Returns password"""
+        Returns password, or None when the operator chose Keep"""
+        if keep and not offer_generate:
+            raise ValueError("get_password(): keep needs the menu")
         required = self._value_required
         self._value_required = True
         try:
@@ -440,6 +460,7 @@ class Dialog:
                 list(blacklist or []),
                 offer_generate,
                 gen_length,
+                keep,
             )
         finally:
             self._value_required = required
@@ -453,16 +474,24 @@ class Dialog:
         blacklist: list[str],
         offer_generate: bool,
         gen_length: int,
-    ) -> str:
+        keep: str = "",
+    ) -> str | None:
         if offer_generate:
+            generate = "A strong random password"
+            choices = [(KEEP, keep)] if keep else []
+            if not keep:
+                generate += " (recommended)"
+            choices += [
+                ("Generate", generate),
+                ("Manual", "Type my own password"),
+            ]
             choice = self.menu(
                 title,
                 f"{text}\n\nChoose how to set this password:",
-                [
-                    ("Generate", "A strong random password (recommended)"),
-                    ("Manual", "Type my own password"),
-                ],
+                choices,
             )
+            if choice == KEEP:
+                return None
             if choice == "Generate":
                 password = self._generate_password_flow(
                     title, pass_req, min_complexity, blacklist, gen_length
