@@ -1,3 +1,20 @@
+inithooks (2.3.6+keel18) trixie; urgency=medium
+
+  * 95secupdates reads its updates from
+    /etc/apt/sources.list.d/security.sources, Debian's security archive,
+    the file common's conf/bootstrap_apt now writes. It named
+    security.sources.sources, the file TurnKey's bootstrap wrote with an
+    archive.turnkeylinux.org stanza in it, so the first boot of a Keel image
+    fetched from the TurnKey archive. The path can be set with
+    SEC_UPDATES_SOURCES, for tests/test-secupdates.bats.
+  * 95secupdates fails when that file is missing, logged and in its log.
+    apt reads a missing sourcelist as an empty one, so the upgrade used to
+    succeed having installed nothing.
+  * secupdates-ask.py checks it can resolve security.debian.org, where the
+    updates come from, instead of archive.turnkeylinux.org.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Fri, 02 Oct 2026 17:00:00 +0000
+
 inithooks (2.3.6+keel17) trixie; urgency=medium
 
   * The console no longer looks frozen between first boot screens. On a

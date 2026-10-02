@@ -19,6 +19,10 @@ SEC_UPDATES="${SEC_UPDATES,,}"
 # keel inspect reads this line to report security.updates_at_first_boot.
 SEC_UPDATES_RECORD="${SEC_UPDATES_RECORD:-/var/lib/inithooks/sec-updates}"
 SEC_UPDATES_LOG="${SEC_UPDATES_LOG:-/var/log/inithooks/secupdates.log}"
+# The one source the upgrade reads: Debian's security archive, written by
+# common's conf/bootstrap_apt. Every other source is left out on purpose,
+# so the first boot installs security fixes and nothing else.
+SEC_UPDATES_SOURCES="${SEC_UPDATES_SOURCES:-/etc/apt/sources.list.d/security.sources}"
 
 record() {
     if ! { mkdir -p "$(dirname "$SEC_UPDATES_RECORD")" \
@@ -36,6 +40,14 @@ install_updates() {
 
     LOGFILE=$SEC_UPDATES_LOG
     mkdir -p "$(dirname "$LOGFILE")"
+    # apt reads a missing sourcelist as an empty one: the upgrade would
+    # succeed, install nothing and the boot would go on as if it had
+    if [[ ! -f "$SEC_UPDATES_SOURCES" ]]; then
+        msg="[95secupdates] no security source at $SEC_UPDATES_SOURCES"
+        logger -t inithooks -p err "$msg"
+        echo "ERROR: $msg" >> "$LOGFILE"
+        exit 1
+    fi
     # 'ls' stderr is suppressed as containers don't have the checked paths. If
     # any other errors occur we've got much bigger problems!
     # SC2012 is a shellcheck warning re use of 'ls'. 'ls' used to provide
@@ -56,7 +68,7 @@ install_updates() {
     DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y \
         -o APT::Get::Show-Upgraded=true \
         -o Dir::Etc::sourceparts=/dev/null \
-        -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/security.sources.sources \
+        -o Dir::Etc::sourcelist="$SEC_UPDATES_SOURCES" \
         -o DPkg::Options::=--force-confdef \
         -o DPkg::Options::=--force-confold | tee -a "$LOGFILE"
 

@@ -53,7 +53,7 @@ def main():
 
     try:
         subprocess.run(
-            ["host", "-W", "2", "archive.turnkeylinux.org"],
+            ["host", "-W", "2", "security.debian.org"],
             check=True,
         )
     except subprocess.CalledProcessError:

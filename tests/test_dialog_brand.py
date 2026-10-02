@@ -29,12 +29,10 @@ SHOWN = [
 ]
 # Strings that name TurnKey and stay: a command name kept for
 # compatibility (the error text tells the operator to run it, and it is
-# what is installed), the host the update screen checks it can reach, and
-# the variable keel-init sets for the hooks (setpass.py reads it), neither
-# of which is ever shown.
+# what is installed), and the variable keel-init sets for the hooks
+# (setpass.py reads it), which is never shown.
 ALLOWED = {
     "turnkey-install-security-updates",
-    "archive.turnkeylinux.org",
     "_TURNKEY_INIT",
 }
 FIRST_BOOT = "Keel Linux - First boot configuration"
@@ -113,6 +111,14 @@ class TestShownText(unittest.TestCase):
             for text in strings(path):
                 with self.subTest(path=path, text=text[:60]):
                     self.assertFalse(turnkey_in(text))
+
+    def test_the_update_screen_checks_it_can_reach_debian_security(self):
+        # the updates come from security.debian.org (Keel-Linux/common
+        # conf/bootstrap_apt), so that is the host worth resolving; the
+        # TurnKey archive is no source of a Keel image
+        hosts = [s for s in strings("bin/secupdates-ask.py") if "." in s]
+        self.assertIn("security.debian.org", hosts)
+        self.assertNotIn("archive.turnkeylinux.org", hosts)
 
     def test_the_security_alerts_mail_names_no_turnkey_address(self):
         with open(join(ROOT, "bin/secalerts.sh")) as fob:

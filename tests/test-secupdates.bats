@@ -40,7 +40,15 @@ if [[ -n "${LS_CHANGES-}" ]]; then echo "listing $n"; else echo listing; fi'
     } > "$INITHOOKS_DEFAULT"
     export SEC_UPDATES_RECORD=$BATS_TEST_TMPDIR/var/lib/inithooks/sec-updates
     export SEC_UPDATES_LOG=$BATS_TEST_TMPDIR/secupdates.log
+    export SEC_UPDATES_SOURCES=$BATS_TEST_TMPDIR/security.sources
+    printf 'Types: deb\nURIs: http://security.debian.org/debian-security\n' \
+        > "$SEC_UPDATES_SOURCES"
     unset SEC_UPDATES DPKG_AUDIT LS_CHANGES ASK_STATUS
+}
+
+# the value the dist-upgrade call passed for one apt option
+apt_option() {
+    calls apt-get | grep -o -- "-o $1=[^ ]*" | sed "s|^-o $1=||"
 }
 
 @test "a preseeded SKIP installs nothing and records skip" {
@@ -134,4 +142,39 @@ if [[ -n "${LS_CHANGES-}" ]]; then echo "listing $n"; else echo listing; fi'
 
     [ "$status" -eq 0 ]
     [ "$(cat "$SEC_UPDATES_RECORD")" = "skip" ]
+}
+
+# ------------------------------------------------- where the updates come from
+
+@test "the upgrade reads the security source file and no other" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+    [ "$(apt_option Dir::Etc::sourcelist)" = "$SEC_UPDATES_SOURCES" ]
+    [ "$(apt_option Dir::Etc::sourceparts)" = /dev/null ]
+}
+
+@test "the default security source is security.sources, the file images ship" {
+    # common's conf/bootstrap_apt writes it; it used to write
+    # security.sources.sources, and cron-apt and this hook named that
+    run grep -c 'SEC_UPDATES_SOURCES:-/etc/apt/sources.list.d/security.sources}' \
+        "$REPO/firstboot.d/95secupdates"
+    [ "$output" = 1 ]
+    run ! grep -q 'security\.sources\.sources' "$REPO/firstboot.d/95secupdates"
+}
+
+@test "a missing security source fails the hook instead of upgrading nothing" {
+    # apt reads a missing sourcelist as an empty one: the dist-upgrade
+    # succeeds, installs nothing and the boot says the updates were applied
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+    rm "$SEC_UPDATES_SOURCES"
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 1 ]
+    [[ "$(calls apt-get)" != *dist-upgrade* ]]
+    [[ "$(calls logger)" == *"no security source at $SEC_UPDATES_SOURCES"* ]]
+    [[ "$(cat "$SEC_UPDATES_LOG")" == *"no security source at $SEC_UPDATES_SOURCES"* ]]
 }
