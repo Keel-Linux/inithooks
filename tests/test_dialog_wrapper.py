@@ -182,8 +182,11 @@ class TestGetPasswordGenerate(unittest.TestCase):
         _, confirm, _, confirm_kwargs = d.console.calls[2]
         self.assertEqual(len(password), 20)
         self.assertEqual(shown_password(shown), password)
-        self.assertEqual(shown_password(confirm), password)
         self.assertIn("not shown again", shown)
+        # the screen said so, and the question after it keeps its word
+        self.assertNotIn(password, confirm)
+        self.assertNotIn("\\Zr", confirm)
+        self.assertIn("Did you save the password?", confirm)
         self.assertTrue(shown_kwargs["colors"])
         self.assertEqual(confirm_kwargs["yes_label"], "Saved")
         self.assertIn("New", confirm_kwargs["no_label"])
@@ -253,9 +256,22 @@ class TestGetPasswordGenerate(unittest.TestCase):
         self.assertEqual(
             d.console.widgets(), ["menu", "msgbox", "msgbox", "yesno", "yesno"]
         )
-        for call in d.console.calls[1:]:
+        for call in d.console.calls[1:3]:
             self.assertEqual(shown_password(call[1]), password)
+        for call in d.console.calls[3:]:
+            self.assertNotIn(password, call[1])
         self.assertNotIn("quit", d.console.shown())
+
+    def test_the_password_is_on_one_screen_only(self):
+        # "It is not shown again": a refused confirmation shows a new
+        # password once, and never the one it discarded
+        d = dialog(GENERATE, OK, CANCEL, OK, OK)
+        password = d.get_password("Root Password", "text")
+        bands = [call[1] for call in d.console.calls if "\\Zr" in call[1]]
+        self.assertEqual(len(bands), 2)
+        self.assertEqual(shown_password(bands[-1]), password)
+        self.assertEqual(sum(password in call[1] for call in d.console.calls),
+                         1)
 
     def test_generator_refusing_the_length_falls_back_to_manual(self):
         d = dialog(GENERATE, OK, (OK, "Abcdefg1"), (OK, "Abcdefg1"))
@@ -463,14 +479,20 @@ class TestScreenOnTheTerminal(unittest.TestCase):
             text = shown.removeprefix("\n")  # wrapper() adds it
             self.assertEqual(width, 68, widget)
             self.assertEqual(height, d._calc_height(text, width), widget)
-            self.assertLess(height, d._calc_height(text), widget)
+            if password in text:
+                # the wide band wraps at the default width, not at 68
+                self.assertLess(height, d._calc_height(text), widget)
+        self.assertEqual([call[0] for call in d.console.calls
+                          if password in call[1]], ["msgbox", "msgbox"])
 
     def test_generated_password_never_reaches_a_captured_stdout(self):
         def draw_text():
             os.write(1, d.console.calls[-1][1].encode())
             return OK
 
-        d = dialog(GENERATE, draw_text, draw_text)
+        # the password is on the first screen only; the question after it
+        # draws nothing here, so it cannot write over what the first drew
+        d = dialog(GENERATE, draw_text, OK)
         with mock.patch.object(dw, "TTY", self.tty):
             password = d.get_password("t", "x")
         self.assertIn(password.encode(), self.read(self.tty))

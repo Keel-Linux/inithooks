@@ -554,11 +554,12 @@ class Dialog:
                 colors=True,
             )
 
+            # The screen above says the password is not shown again, so
+            # the question does not show it: an operator who did not save
+            # it answers New and gets another one, shown once as well.
             confirm = "\n".join(
                 [
-                    self._centered("Did you save this password?", width),
-                    "",
-                    band,
+                    self._centered("Did you save the password?", width),
                     "",
                     self._centered(
                         "Saved: continue.  New: discard it, show another.",
