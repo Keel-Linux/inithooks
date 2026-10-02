@@ -2,6 +2,9 @@
 # install security updates
 # SEC_UPDATES: SKIP, FORCE (if none specified, will be interactive)
 
+# every '| tee' below must carry the exit status of what it logs
+set -o pipefail
+
 INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
 # shellcheck source=default/inithooks
 source "$INITHOOKS_DEFAULT"
@@ -19,6 +22,10 @@ SEC_UPDATES="${SEC_UPDATES,,}"
 # keel inspect reads this line to report security.updates_at_first_boot.
 SEC_UPDATES_RECORD="${SEC_UPDATES_RECORD:-/var/lib/inithooks/sec-updates}"
 SEC_UPDATES_LOG="${SEC_UPDATES_LOG:-/var/log/inithooks/secupdates.log}"
+# The one source the upgrade reads: Debian's security archive, written by
+# common's conf/bootstrap_apt. Every other source is left out on purpose,
+# so the first boot installs security fixes and nothing else.
+SEC_UPDATES_SOURCES="${SEC_UPDATES_SOURCES:-/etc/apt/sources.list.d/security.sources}"
 
 record() {
     if ! { mkdir -p "$(dirname "$SEC_UPDATES_RECORD")" \
@@ -26,6 +33,34 @@ record() {
         logger -t inithooks -p warn \
             "[95secupdates] could not record $1 in $SEC_UPDATES_RECORD"
     fi
+}
+
+# The listing of the kernel modules and /boot, to tell whether the upgrade
+# installed a kernel and the machine needs a reboot. Containers have no
+# /boot: ls then fails, which says nothing about the upgrade.
+#
+# SC2012: ls is wanted here for its detailed listing, not to iterate.
+# shellcheck disable=SC2012
+modules_and_boot() {
+    ls -la /lib/modules /boot 2>/dev/null || true
+}
+
+# offline MESSAGE: no update can be fetched. Said in the system log and in
+# the hook's own log, and the first boot goes on: a machine with no network
+# yet is not a broken one. Nothing is recorded, since nothing was installed.
+offline() {
+    local msg="[95secupdates] $1; security updates not installed, run turnkey-install-security-updates once the network is up"
+    logger -t inithooks -p warn "$msg"
+    echo "WARNING: $msg" >> "$LOGFILE"
+    exit 0
+}
+
+# the InRelease of the first stanza of the security source
+security_release_url() {
+    local uri suite
+    uri=$(awk '/^URIs:/ { print $2; exit }' "$SEC_UPDATES_SOURCES")
+    suite=$(awk '/^Suites:/ { print $2; exit }' "$SEC_UPDATES_SOURCES")
+    echo "${uri%/}/dists/$suite/InRelease"
 }
 
 install_updates() {
@@ -36,13 +71,20 @@ install_updates() {
 
     LOGFILE=$SEC_UPDATES_LOG
     mkdir -p "$(dirname "$LOGFILE")"
-    # 'ls' stderr is suppressed as containers don't have the checked paths. If
-    # any other errors occur we've got much bigger problems!
-    # SC2012 is a shellcheck warning re use of 'ls'. 'ls' used to provide
-    # detailed filesystem info which will highlight changes requiring reboot.
-    #
-    # shellcheck disable=SC2012
-    OLDMD5=$(ls -la /lib/modules /boot 2>/dev/null | md5sum)
+    # apt reads a missing sourcelist as an empty one: the upgrade would
+    # succeed, install nothing and the boot would go on as if it had
+    if [[ ! -f "$SEC_UPDATES_SOURCES" ]]; then
+        msg="[95secupdates] no security source at $SEC_UPDATES_SOURCES"
+        logger -t inithooks -p err "$msg"
+        echo "ERROR: $msg" >> "$LOGFILE"
+        exit 1
+    fi
+    local release
+    release=$(security_release_url)
+    if ! curl -fsS --max-time 15 -o /dev/null "$release" 2>/dev/null; then
+        offline "cannot reach ${release%/dists/*}"
+    fi
+    OLDMD5=$(modules_and_boot | md5sum)
     if [[ -n "$(dpkg --audit 2>/dev/null)" ]]; then
         msg="[95secupdates] dpkg in an inconsistent state (see $LOGFILE)"
         logger -t inithooks -p warn "$msg"
@@ -51,18 +93,18 @@ install_updates() {
     fi
     DEBIAN_FRONTEND=noninteractive dpkg --force-confdef --force-confold \
         --configure -a 2>&1 | tee -a "$LOGFILE"
-    apt-get update
+    if ! apt-get update 2>&1 | tee -a "$LOGFILE"; then
+        offline "apt-get update failed (see $LOGFILE)"
+    fi
     DEBIAN_FRONTEND=noninteractive apt-get autoclean -y
     DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y \
         -o APT::Get::Show-Upgraded=true \
         -o Dir::Etc::sourceparts=/dev/null \
-        -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/security.sources.sources \
+        -o Dir::Etc::sourcelist="$SEC_UPDATES_SOURCES" \
         -o DPkg::Options::=--force-confdef \
         -o DPkg::Options::=--force-confold | tee -a "$LOGFILE"
 
-    # per above note re containers
-    # shellcheck disable=SC2012
-    NEWMD5=$(ls -la /lib/modules /boot 2>/dev/null | md5sum)
+    NEWMD5=$(modules_and_boot | md5sum)
     if [[ "$NEWMD5" != "$OLDMD5" ]]; then
         chmod +x $INITHOOKS_PATH/firstboot.d/99reboot
     fi
@@ -74,9 +116,11 @@ if [[ "$SEC_UPDATES" == "skip" ]]; then
     logger -t inithooks -p warn "[95secupdates] security updates skipped"
     exit 0
 elif [[ "$SEC_UPDATES" == "force" ]]; then
-    record force
     logger -t inithooks "[95secupdates] security updates being installed"
     install_updates
+    # only an install that succeeded is recorded: install_updates exits
+    # before this on failure, and offline
+    record force
     exit 0
 elif [[ -n "$SEC_UPDATES" ]]; then
     logger -t inithooks -p err "[95secupdates] invalid preseed value: $SEC_UPDATES"
@@ -97,7 +141,7 @@ elif [[ $exit_code -ne 0 ]]; then
     exit "$exit_code"
 else
     # exit_code == 0
-    record force
     logger -t inithooks "[95secupdates] security updates being installed"
     install_updates
+    record force
 fi

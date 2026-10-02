@@ -1,3 +1,34 @@
+inithooks (2.3.6+keel18) trixie; urgency=medium
+
+  * 95secupdates reads its updates from
+    /etc/apt/sources.list.d/security.sources, Debian's security archive,
+    the file common's conf/bootstrap_apt now writes. It named
+    security.sources.sources, the file TurnKey's bootstrap wrote with an
+    archive.turnkeylinux.org stanza in it, so the first boot of a Keel image
+    fetched from the TurnKey archive. The path can be set with
+    SEC_UPDATES_SOURCES, for tests/test-secupdates.bats.
+  * 95secupdates fails when that file is missing, logged and in its log.
+    apt reads a missing sourcelist as an empty one, so the upgrade used to
+    succeed having installed nothing.
+  * secupdates-ask.py checks it can resolve security.debian.org, where the
+    updates come from, instead of archive.turnkeylinux.org.
+  * 95secupdates runs under pipefail. dist-upgrade, dpkg --configure and
+    apt-get update are piped into tee for the log, and a failure of any of
+    them used to end as tee's success. The listing of /lib/modules and
+    /boot no longer fails the hook where /boot does not exist.
+  * Offline, 95secupdates says so and the first boot goes on. Before
+    installing it fetches the InRelease of the security source with curl
+    (now a dependency); when that or apt-get update fails, it logs
+    "cannot reach ..." or "apt-get update failed" to the system log and to
+    its own log, names turnkey-install-security-updates, and exits 0. Under
+    -e an offline apt-get update used to stop the hook with nothing logged.
+  * force is recorded only after the install succeeded, not before it.
+    An install that failed, or never ran because the machine was offline,
+    leaves no record, so keel inspect does not report updates that were
+    never applied.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Fri, 02 Oct 2026 17:00:00 +0000
+
 inithooks (2.3.6+keel17) trixie; urgency=medium
 
   * The console no longer looks frozen between first boot screens. On a
