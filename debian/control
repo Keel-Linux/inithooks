@@ -12,6 +12,7 @@ Standards-Version: 4.7.2
 Package: inithooks
 Architecture: all
 Depends:
+ curl,
  kbd,
  ${misc:Depends},
  ${python3:Depends},

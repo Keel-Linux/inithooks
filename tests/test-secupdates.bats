@@ -18,12 +18,21 @@ REPO=$BATS_TEST_DIRNAME/..
 setup() {
     setup_stubs
     stub logger
-    stub apt-get
+    # apt-get update exits UPDATE_STATUS; dist-upgrade prints a line and
+    # exits UPGRADE_STATUS, so a failure has to cross the pipe into tee
+    stub apt-get 'case "$*" in
+update*) exit "${UPDATE_STATUS:-0}" ;;
+*dist-upgrade*) echo "0 upgraded"; exit "${UPGRADE_STATUS:-0}" ;;
+esac'
+    # curl answers the reachability check: exit CURL_STATUS
+    stub curl 'exit "${CURL_STATUS:-0}"'
     stub dpkg 'if [[ "$1" == --audit ]]; then echo "${DPKG_AUDIT-}"; fi'
     # the module and boot listing before and after the upgrade: the same
-    # unless LS_CHANGES is set, when the second call differs
+    # unless LS_CHANGES is set, when the second call differs; LS_STATUS is
+    # its exit status (2 where /boot does not exist, as in a container)
     stub ls 'n=$(wc -l < "'"$STUBS"'/ls.calls")
-if [[ -n "${LS_CHANGES-}" ]]; then echo "listing $n"; else echo listing; fi'
+if [[ -n "${LS_CHANGES-}" ]]; then echo "listing $n"; else echo listing; fi
+exit "${LS_STATUS:-0}"'
 
     export INITHOOKS_PATH=$BATS_TEST_TMPDIR/inithooks
     mkdir -p "$INITHOOKS_PATH/bin" "$INITHOOKS_PATH/firstboot.d"
@@ -41,9 +50,10 @@ if [[ -n "${LS_CHANGES-}" ]]; then echo "listing $n"; else echo listing; fi'
     export SEC_UPDATES_RECORD=$BATS_TEST_TMPDIR/var/lib/inithooks/sec-updates
     export SEC_UPDATES_LOG=$BATS_TEST_TMPDIR/secupdates.log
     export SEC_UPDATES_SOURCES=$BATS_TEST_TMPDIR/security.sources
-    printf 'Types: deb\nURIs: http://security.debian.org/debian-security\n' \
+    printf 'Types: deb\nURIs: http://security.debian.org/debian-security\nSuites: trixie-security\nComponents: main\n' \
         > "$SEC_UPDATES_SOURCES"
-    unset SEC_UPDATES DPKG_AUDIT LS_CHANGES ASK_STATUS
+    unset SEC_UPDATES DPKG_AUDIT LS_CHANGES LS_STATUS ASK_STATUS \
+        UPDATE_STATUS UPGRADE_STATUS CURL_STATUS
 }
 
 # the value the dist-upgrade call passed for one apt option
@@ -177,4 +187,97 @@ apt_option() {
     [[ "$(calls apt-get)" != *dist-upgrade* ]]
     [[ "$(calls logger)" == *"no security source at $SEC_UPDATES_SOURCES"* ]]
     [[ "$(cat "$SEC_UPDATES_LOG")" == *"no security source at $SEC_UPDATES_SOURCES"* ]]
+}
+
+# ------------------------------------------- offline, failures and the record
+
+@test "the reachability check asks for the InRelease of the security source" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+    [[ "$(calls curl)" == *"http://security.debian.org/debian-security/dists/trixie-security/InRelease"* ]]
+}
+
+@test "offline, the boot goes on, says why, installs and records nothing" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+    export CURL_STATUS=7
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$SEC_UPDATES_RECORD" ]
+    [ -z "$(calls apt-get)" ]
+    local said="cannot reach http://security.debian.org/debian-security"
+    [[ "$(calls logger)" == *"$said"* ]]
+    [[ "$(calls logger)" == *turnkey-install-security-updates* ]]
+    [[ "$(cat "$SEC_UPDATES_LOG")" == *"$said"* ]]
+}
+
+@test "offline after Install on the screen, the boot goes on too" {
+    export ASK_STATUS=0 CURL_STATUS=6
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$SEC_UPDATES_RECORD" ]
+    [[ "$(calls apt-get)" != *dist-upgrade* ]]
+}
+
+@test "an apt-get update that fails is said, and the boot goes on" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+    export UPDATE_STATUS=100
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$SEC_UPDATES_RECORD" ]
+    [[ "$(calls apt-get)" != *dist-upgrade* ]]
+    [[ "$(calls logger)" == *"apt-get update failed"* ]]
+    [[ "$(cat "$SEC_UPDATES_LOG")" == *"apt-get update failed"* ]]
+}
+
+@test "a dist-upgrade that fails fails the hook through tee, and records nothing" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+    export UPGRADE_STATUS=100
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -ne 0 ]
+    [ ! -e "$SEC_UPDATES_RECORD" ]
+    [[ "$(cat "$SEC_UPDATES_LOG")" == *"0 upgraded"* ]]
+}
+
+@test "a failed install after Install on the screen records nothing either" {
+    export ASK_STATUS=0 UPGRADE_STATUS=100
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -ne 0 ]
+    [ ! -e "$SEC_UPDATES_RECORD" ]
+}
+
+@test "force is recorded only after the upgrade ran" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+    # the record must not exist yet when dist-upgrade runs
+    stub apt-get 'case "$*" in
+*dist-upgrade*) [ -e "'"$SEC_UPDATES_RECORD"'" ] && exit 42; exit 0 ;;
+esac'
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SEC_UPDATES_RECORD")" = "force" ]
+}
+
+@test "a machine without /boot, where ls fails, still installs the updates" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+    export LS_STATUS=2
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SEC_UPDATES_RECORD")" = "force" ]
+    [[ "$(calls apt-get)" == *dist-upgrade* ]]
 }

@@ -12,6 +12,20 @@ inithooks (2.3.6+keel18) trixie; urgency=medium
     succeed having installed nothing.
   * secupdates-ask.py checks it can resolve security.debian.org, where the
     updates come from, instead of archive.turnkeylinux.org.
+  * 95secupdates runs under pipefail. dist-upgrade, dpkg --configure and
+    apt-get update are piped into tee for the log, and a failure of any of
+    them used to end as tee's success. The listing of /lib/modules and
+    /boot no longer fails the hook where /boot does not exist.
+  * Offline, 95secupdates says so and the first boot goes on. Before
+    installing it fetches the InRelease of the security source with curl
+    (now a dependency); when that or apt-get update fails, it logs
+    "cannot reach ..." or "apt-get update failed" to the system log and to
+    its own log, names turnkey-install-security-updates, and exits 0. Under
+    -e an offline apt-get update used to stop the hook with nothing logged.
+  * force is recorded only after the install succeeded, not before it.
+    An install that failed, or never ran because the machine was offline,
+    leaves no record, so keel inspect does not report updates that were
+    never applied.
 
  -- Marcos Mendez <mendez.foto@gmail.com>  Fri, 02 Oct 2026 17:00:00 +0000
 
