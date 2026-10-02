@@ -1,0 +1,67 @@
+#!/bin/bash -e
+# Ask the machine's fully qualified domain name, blog.example.org, prefilled
+# with the name the machine has (what `pct create --hostname` set). The
+# answer is recorded in the instance description as instance.hostname and
+# instance.fqdn, with tls.acme.domains when the description declares none,
+# so confconsole's Let's Encrypt screen offers it; then the machine is
+# renamed the way 09hostname renames it (lib/hostname.sh), and /etc/hosts
+# gets the entry that makes `hostname -f` answer the name. A name without a
+# domain is kept as the hostname alone, and the screen says that no
+# certificate can be requested without a domain. An empty answer keeps what
+# the machine has.
+#
+# The description first: it is what the machine is asked to be, and what
+# keel spec apply --system converges, so a rename that fails after it
+# leaves a machine whose description says what it should be, not one
+# renamed with no record of it. The /etc/hosts entry comes after the
+# rename, which replaces the old name wherever it stands. An answer that
+# changes nothing writes nothing.
+#
+# FQDN: SKIP, the name (if none specified, will be interactive). The
+# instance description renders instance.fqdn as FQDN (00declarative), so a
+# described machine is not asked.
+#
+# Position: an interactive hook is numbered 30 or above (run waits for the
+# boot to finish from 30 on, so the screen is not drawn over); after
+# 30rootpass, which stays the first screen, and before the application's
+# hooks and 85secalerts.
+
+INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
+# shellcheck source=default/inithooks
+source "$INITHOOKS_DEFAULT"
+# shellcheck source=lib/hostname.sh
+source "$INITHOOKS_PATH/lib/hostname.sh"
+
+if [[ -e "$INITHOOKS_CONF" ]]; then
+    # shellcheck source=/dev/null
+    source "$INITHOOKS_CONF"
+fi
+
+[[ "${FQDN^^}" == "SKIP" ]] && exit 0
+
+# the screen prints HOSTNAME= and FQDN= once the operator has answered,
+# and nothing when the machine keeps its name
+answer=$("$INITHOOKS_PATH/bin/fqdn.py" --fqdn="$FQDN" --current="$(hostname)")
+[[ -n "$answer" ]] || exit 0
+
+new_hostname=
+new_fqdn=
+while IFS='=' read -r key value; do
+    case $key in
+        HOSTNAME) new_hostname=$value ;;
+        FQDN) new_fqdn=$value ;;
+        *) echo "31fqdn: unexpected answer from fqdn.py: $key" >&2; exit 1 ;;
+    esac
+done <<< "$answer"
+if [[ -z "$new_hostname" ]]; then
+    echo "31fqdn: fqdn.py answered without a hostname" >&2
+    exit 1
+fi
+
+"$INITHOOKS_PATH/bin/fqdn.py" --record --hostname="$new_hostname" \
+    --fqdn="$new_fqdn"
+
+hostname_set "$new_hostname"
+
+"$INITHOOKS_PATH/bin/fqdn.py" --hosts --hostname="$new_hostname" \
+    --fqdn="$new_fqdn"

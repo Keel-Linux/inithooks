@@ -22,6 +22,7 @@ dw = load_wrapper()
 
 ROOT = dirname(dirname(abspath(__file__)))
 SHOWN = [
+    "bin/fqdn.py",
     "bin/reboot-ask.py",
     "bin/secalerts.py",
     "bin/secupdates-ask.py",

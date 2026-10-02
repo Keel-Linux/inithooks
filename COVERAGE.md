@@ -4,6 +4,39 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch feat/first-boot-fqdn: shell 99.62, Python 99 (2026-10-02)
+
+The first boot asks the fully qualified domain name (31fqdn). Shell:
+`lib/hostname.sh` 9/9 (the rename 09hostname has always done, as a
+function that replaces the name as a whole name or a first label, through
+perl), `firstboot.d/09hostname` 8/8, measured for the first time, and
+`firstboot.d/31fqdn` 21/21, 100 percent each, from
+`tests/test-hostname.bats` (13 tests) and `tests/test-fqdn.bats` (16
+tests): the rename over scratch copies of the files, the name inside other
+words left alone, a colon and a dot matched literally, the same name again
+touching nothing, bash's own HOSTNAME, the screen asked with the name the
+machine has, the description recorded before the rename and the hosts
+entry after it, a hostname without a domain, an empty answer, FQDN
+preseeded and SKIP, a failing screen, record or hosts entry, an answer the
+screen did not shape, and the real `bin/fqdn.py` with FQDN preseeded
+writing a new instance.yaml, one that is there, leaving one that already
+declares the name alone, and refusing a name that is not a domain. 301
+bats in all. The file list of the rename is a `readarray` here document
+because kcov marks the lines of a multi-line array assignment as not run.
+
+Python: `libinithooks/fqdn.py` (152 statements, 50 branches) 100 percent
+and `bin/fqdn.py` (97 statements, 34 branches) 100 percent, from
+`tests/test_fqdn.py` (66 tests: the checks on a typed name, the split, the
+declared names, the hostname that goes with a name, the prefill, the
+/etc/hosts entry, the updated description and the one left equal, the
+path, the writer with keel stubbed on PATH accepting and refusing, without
+keel, and keeping the file's mode) and `tests/test_fqdn_cli.py` (32 tests
+on the fake dialog: the screen, the notice without a domain, Back, ESC, a
+preseeded name, --record, --hosts and the usage errors).
+`test_dialog_brand.py` checks `bin/fqdn.py` as well; the reader accepts
+`tls.acme.agree_tos` (two tests in `test_declarative_validate.py`). 515
+passed (3 skipped without `KEEL_SRC`); total 99.
+
 ## Branch fix/password-once-and-updates-record: shell 99.58, Python 99 (2026-10-02)
 
 `firstboot.d/95secupdates` is measured for the first time: 49 of 50

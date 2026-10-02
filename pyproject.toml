@@ -6,8 +6,10 @@ branch = true
 include = [
     "libinithooks/declarative.py",
     "libinithooks/dialog_wrapper.py",
+    "libinithooks/fqdn.py",
     "libinithooks/init_lock.py",
     "bin/declarative.py",
+    "bin/fqdn.py",
 ]
 # The reusable workflow runs coverage with --source=libinithooks,bin, and
 # coverage.py ignores "include" when a source is given, so the inherited
