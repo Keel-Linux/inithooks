@@ -34,6 +34,12 @@ fi
 
 chmod 755 /usr/lib/python3/dist-packages/libinithooks/inithooks_cache.py
 
+# The security alerts screen of older versions left this job behind; it
+# posts the operator's email address to the TurnKey Hub every hour until
+# the Hub answers. bin/secalerts.sh no longer writes it; an upgrade removes
+# one an earlier first boot wrote.
+rm -f /etc/cron.hourly/enable_secalerts
+
 # dh_installsystemd enables keel-host-keys.service here (debian/rules says
 # which units it may touch), and dh_python3 byte-compiles the modules. Without
 # this token neither runs: keel-host-keys.service was never enabled, and a

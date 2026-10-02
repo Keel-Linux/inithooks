@@ -12,7 +12,9 @@ inithooks (2.3.6+keel15) trixie; urgency=medium
     TurnKey Hub API from an hourly cron job, and the screen said so with
     a turnkeylinux.org link. Both are gone; the screen and the mail it
     sends now say only what the appliance does, forward root's mail to
-    the address given.
+    the address given. debian/postinst removes
+    /etc/cron.hourly/enable_secalerts, which an earlier first boot may
+    have left posting the address every hour until the Hub answered.
   * The security updates screen no longer links to turnkeylinux.org.
   * The init fence page welcomes the operator to a Keel Linux appliance
     and links to keellinux.org and the Keel tracker instead of the
