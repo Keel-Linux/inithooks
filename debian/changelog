@@ -1,3 +1,23 @@
+inithooks (2.3.6+keel23) trixie; urgency=medium
+
+  * The first boot's security updates never hold it. 95secupdates ran
+    apt-get update and the upgrade with no limit, so a stalled mirror or a
+    package that hung in its maintainer script held every hook after it.
+    apt-get update now runs within SEC_UPDATES_UPDATE_TIMEOUT (120 s) and
+    the whole run within SEC_UPDATES_TIMEOUT (900 s), both read from the
+    inithooks conf; timeout signals apt's whole process group, with
+    SIGKILL 30 s after SIGTERM. A run stopped or failed leaves dpkg
+    configured (dpkg --configure -a, itself within 300 s, when dpkg
+    --audit reports anything), records nothing and writes one line to the
+    inithooks log, the hook's log and the journal, naming cron-apt, whose
+    daily install action (common's conf/turnkey.d/cronapt) installs the
+    updates instead, or turnkey-install-security-updates when that action
+    is missing. An upgrade stopped or failed exits 1, which run logs and
+    goes on to the next hook; no network, an apt-get update that fails or
+    one stopped at its limit exit 0, as before.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Sat, 03 Oct 2026 20:00:00 +0000
+
 inithooks (2.3.6+keel22) trixie; urgency=medium
 
   * A first boot nobody can answer asks nothing. The Web 19.0-3 booted

@@ -4,6 +4,18 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/secupdates-never-hold-boot: shell 99.71 (2026-10-03)
+
+`firstboot.d/95secupdates` 110/111 (the line not run is still the TurnKey
+Hub status call). `tests/test-secupdates.bats` gains 12 tests: an apt-get
+update and an upgrade that hang, stopped within their limits and timed, the
+run's limit applied to apt-get update, dpkg configured after a stopped
+upgrade, an upgrade that fails, one that succeeds, the one line naming
+cron-apt (offline too) or turnkey-install-security-updates without it, a
+limit that is not a number of seconds, and three through the real `run`:
+a hung or failed upgrade and no network leave the hook after it running.
+379 bats; shell total 99.71.
+
 ## Branch fix/headless-first-boot: shell 99.69, Python 99 (2026-10-03)
 
 A first boot nobody can answer, the hosts entry and the certificate's
