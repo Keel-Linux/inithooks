@@ -49,6 +49,11 @@ chmod 640 "$INITHOOKS_LOGFILE"
 FIRSTBOOT_TITLE="Keel Linux - First boot configuration"
 BOOT_WAITED=
 
+# How long a notice may take to reach the console before the notices are
+# given up for this run.
+NOTICE_TIMEOUT="${NOTICE_TIMEOUT:-2}"
+NOTICES_OFF=
+
 # notice TEXT
 # Shows TEXT in a box on the terminal the hooks draw on, and goes on: the
 # screen of the hook before stays up otherwise, and it looks frozen while a
@@ -56,10 +61,42 @@ BOOT_WAITED=
 # on "Did you save the password?" after <Saved>). Nothing is drawn when the
 # output is not a terminal or goes to the log (REDIRECT_OUTPUT), and a
 # notice that cannot be drawn is not an error.
+#
+# A notice may never hold the boot. In an LXC container tty1 is a pty whose
+# master only an attached console (pct console, lxc-console) reads: with
+# nobody attached, the published core booted headless on 2026-10-03 wrote
+# one box per hook until the pty's buffer was full and the next write
+# blocked for good, after 30turnkey-init-fence. Such a console has no size
+# (stty answers 0 0; a VT or an attached console answers its rows and
+# columns), so no notice is drawn on it; and a notice that does not reach
+# the console within NOTICE_TIMEOUT is given up, with the ones after it.
+# Each case is said once, in the log, so an operator can tell.
 notice() {
-    [[ -t 1 ]] && [[ "$REDIRECT_OUTPUT" != "true" ]] || return 0
-    dialog --backtitle "$FIRSTBOOT_TITLE" --infobox "$1" 5 60 2>/dev/null \
-        || true
+    [[ -z "$NOTICES_OFF" ]] || return 0
+    if [[ ! -t 1 ]] || [[ "$REDIRECT_OUTPUT" == "true" ]]; then
+        notices_off "the output is not a terminal"
+        return 0
+    fi
+    # the console on fd 3 while the substitution runs: inside it fd 1 is
+    # the pipe that captures the answer, not the console
+    local size
+    { size=$(stty size <&3 2>/dev/null || true); } 3<&1
+    if [[ -z "$size" ]] || [[ "$size" == "0 0" ]]; then
+        notices_off "the console has no size, nobody is attached to it"
+        return 0
+    fi
+    timeout --foreground "$NOTICE_TIMEOUT" dialog --backtitle "$FIRSTBOOT_TITLE" \
+        --infobox "$1" 5 60 2>/dev/null
+    if [[ $? -eq 124 ]]; then
+        notices_off "the console did not take a notice in ${NOTICE_TIMEOUT} s, nobody is reading it"
+    fi
+    return 0
+}
+
+# notices_off REASON: no more notices this run, said once
+notices_off() {
+    NOTICES_OFF=true
+    log info "first boot notices not drawn: $1"
 }
 
 wait_for_boot() {

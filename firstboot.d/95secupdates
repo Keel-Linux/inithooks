@@ -27,10 +27,17 @@ SEC_UPDATES_LOG="${SEC_UPDATES_LOG:-/var/log/inithooks/secupdates.log}"
 # so the first boot installs security fixes and nothing else.
 SEC_UPDATES_SOURCES="${SEC_UPDATES_SOURCES:-/etc/apt/sources.list.d/security.sources}"
 
+# journal ARGS: logger, which may not fail the hook under -e: journald can
+# be down (15regen-sslcert died of it on 2026-10-03), and the hook's own
+# log file and the record are what matter.
+journal() {
+    logger -t inithooks "$@" 2>/dev/null || true
+}
+
 record() {
     if ! { mkdir -p "$(dirname "$SEC_UPDATES_RECORD")" \
             && echo "$1" > "$SEC_UPDATES_RECORD"; } 2>/dev/null; then
-        logger -t inithooks -p warn \
+        journal -p warn \
             "[95secupdates] could not record $1 in $SEC_UPDATES_RECORD"
     fi
 }
@@ -50,7 +57,7 @@ modules_and_boot() {
 # yet is not a broken one. Nothing is recorded, since nothing was installed.
 offline() {
     local msg="[95secupdates] $1; security updates not installed, run turnkey-install-security-updates once the network is up"
-    logger -t inithooks -p warn "$msg"
+    journal -p warn "$msg"
     echo "WARNING: $msg" >> "$LOGFILE"
     exit 0
 }
@@ -75,7 +82,7 @@ install_updates() {
     # succeed, install nothing and the boot would go on as if it had
     if [[ ! -f "$SEC_UPDATES_SOURCES" ]]; then
         msg="[95secupdates] no security source at $SEC_UPDATES_SOURCES"
-        logger -t inithooks -p err "$msg"
+        journal -p err "$msg"
         echo "ERROR: $msg" >> "$LOGFILE"
         exit 1
     fi
@@ -87,7 +94,7 @@ install_updates() {
     OLDMD5=$(modules_and_boot | md5sum)
     if [[ -n "$(dpkg --audit 2>/dev/null)" ]]; then
         msg="[95secupdates] dpkg in an inconsistent state (see $LOGFILE)"
-        logger -t inithooks -p warn "$msg"
+        journal -p warn "$msg"
         echo "WARNING: $msg" >> "$LOGFILE"
         dpkg --audit 2>&1 | tee -a "$LOGFILE"
     fi
@@ -113,17 +120,17 @@ install_updates() {
 # SEC_UPDATES preseeded - unset SEC_UPDATES will run interactive (below)
 if [[ "$SEC_UPDATES" == "skip" ]]; then
     record skip
-    logger -t inithooks -p warn "[95secupdates] security updates skipped"
+    journal -p warn "[95secupdates] security updates skipped"
     exit 0
 elif [[ "$SEC_UPDATES" == "force" ]]; then
-    logger -t inithooks "[95secupdates] security updates being installed"
+    journal "[95secupdates] security updates being installed"
     install_updates
     # only an install that succeeded is recorded: install_updates exits
     # before this on failure, and offline
     record force
     exit 0
 elif [[ -n "$SEC_UPDATES" ]]; then
-    logger -t inithooks -p err "[95secupdates] invalid preseed value: $SEC_UPDATES"
+    journal -p err "[95secupdates] invalid preseed value: $SEC_UPDATES"
     exit 1
 fi
 
@@ -133,7 +140,7 @@ $INITHOOKS_PATH/bin/secupdates-ask.py || exit_code=$?
 if [[ $exit_code -eq 99 ]]; then
     # secupdates-ask.py returns 99 if user selects 'skip'
     record skip
-    logger -t inithooks -p warn "[95secupdates] security updates skipped"
+    journal -p warn "[95secupdates] security updates skipped"
     exit 0
 elif [[ $exit_code -ne 0 ]]; then
     # any other non-zero return code signals an unknown error; the run script
@@ -141,7 +148,7 @@ elif [[ $exit_code -ne 0 ]]; then
     exit "$exit_code"
 else
     # exit_code == 0
-    logger -t inithooks "[95secupdates] security updates being installed"
+    journal "[95secupdates] security updates being installed"
     install_updates
     record force
 fi

@@ -1,3 +1,29 @@
+inithooks (2.3.6+keel21) trixie; urgency=medium
+
+  * A first boot without a journal finishes. 15regen-sslcert ran under
+    bash -e and its log() called logger, which fails with "socket
+    /dev/log: Connection refused" when journald is down (the published
+    core 19.0-6 booted headless on BR2, 2026-10-03: journald dies with
+    status=243/CREDENTIALS where the host's AppArmor profile denies the
+    ramfs mount systemd 257 makes for credentials); its first info line
+    killed the hook before it made the certificate. The hook's logger
+    may not fail it now, nor may 95secupdates', the one other hook that
+    logs under -e; the rest log through run, which was tolerant already.
+  * A first boot nobody is watching finishes. run drew a notice box on
+    tty1 for every hook since keel17; in an LXC container tty1 is a pty
+    whose master only an attached console reads (pct console,
+    lxc-console), so with nobody attached the boxes filled the pty's
+    buffer and the write after 30turnkey-init-fence blocked for good
+    (attaching the console drained 30 KB and the boot finished in 20 s).
+    A console with no size (stty answers 0 0, as an unattended LXC tty
+    does; a VT or an attached console answers its rows and columns) gets
+    no notice, and a notice the console does not take within 2 s
+    (NOTICE_TIMEOUT) is given up with the ones after it, so no boot can
+    wedge on its console. Each is said once in the inithooks log and the
+    journal, so an operator can tell why the screen stayed still.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Sat, 03 Oct 2026 12:00:00 +0000
+
 inithooks (2.3.6+keel20) trixie; urgency=medium
 
   * postinst no longer restarts the console's getty on an upgrade. When

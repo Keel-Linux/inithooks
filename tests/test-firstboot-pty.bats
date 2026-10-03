@@ -130,10 +130,14 @@ operator() {
 
 # first_boot WORD KEYS...
 # The run on a pty under script, answered by operator, within TIMEOUT; it
-# fails when a screen never came or the run did not end in time.
+# fails when a screen never came or the run did not end in time. The pty
+# gets the size of a console somebody is attached to: script gives it none
+# when its own input is a pipe, and run draws no notice on a console with
+# no size, since that is an LXC tty nobody is attached to.
 first_boot() {
     set -o pipefail
-    operator "$@" | timeout "$TIMEOUT" script -qfec "$REPO/run" "$SCREEN" \
+    operator "$@" | timeout "$TIMEOUT" script -qfec \
+        "stty rows $LINES cols $COLUMNS; $REPO/run" "$SCREEN" \
         > /dev/null 2>&1
 }
 
