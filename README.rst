@@ -533,6 +533,12 @@ Notes:
       were. It was called security.updates, which is still read: the old
       name renders the same conf and is reported once, with the new name, so
       a description written before the rename keeps booting.
+    - The updates never hold the first boot. 95secupdates gives apt-get
+      update SEC_UPDATES_UPDATE_TIMEOUT seconds (120) and the whole run
+      SEC_UPDATES_TIMEOUT seconds (900), both read from the inithooks conf.
+      A run stopped at its limit, or one that failed, leaves dpkg
+      configured, says so in one line of the inithooks log and the boot goes
+      on; cron-apt installs the updates at its daily run.
 
     - A secret is a mapping with exactly one of file or generate. A secret
       file is read as bytes, one trailing newline is stripped, and it must

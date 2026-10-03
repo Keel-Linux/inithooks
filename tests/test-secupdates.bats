@@ -7,13 +7,18 @@
 # maintainer's screenshot 034).
 #
 # apt-get, dpkg, logger and ls are stubs; secupdates-ask.py is a stub
-# under INITHOOKS_PATH that exits with the status a test sets.
+# under INITHOOKS_PATH that exits with the status a test sets. An apt-get
+# that hangs sleeps for good: the hook must stop it within its limits, and
+# the tests that use one run under an outer timeout so that a hook that
+# does not stop it fails instead of hanging the suite.
 
 bats_require_minimum_version 1.5.0
 
 load helpers
 
 REPO=$BATS_TEST_DIRNAME/..
+# the real sleep, for an apt-get that hangs where sleep is a stub
+REAL_SLEEP=$(command -v sleep)
 
 setup() {
     setup_stubs
@@ -27,6 +32,11 @@ esac'
     # curl answers the reachability check: exit CURL_STATUS
     stub curl 'exit "${CURL_STATUS:-0}"'
     stub dpkg 'if [[ "$1" == --audit ]]; then echo "${DPKG_AUDIT-}"; fi'
+    # the daily job that installs what the first boot did not: cron-apt's
+    # install action (common's conf/turnkey.d/cronapt)
+    export SEC_UPDATES_CRONAPT=$BATS_TEST_TMPDIR/cron-apt/5-install
+    mkdir -p "$(dirname "$SEC_UPDATES_CRONAPT")"
+    touch "$SEC_UPDATES_CRONAPT"
     # the module and boot listing before and after the upgrade: the same
     # unless LS_CHANGES is set, when the second call differs; LS_STATUS is
     # its exit status (2 where /boot does not exist, as in a container)
@@ -58,7 +68,8 @@ exit "${LS_STATUS:-0}"'
     export INITHOOKS_UNATTENDED=no
     export INITHOOKS_LOGFILE=$BATS_TEST_TMPDIR/inithooks.log
     unset SEC_UPDATES DPKG_AUDIT LS_CHANGES LS_STATUS ASK_STATUS \
-        UPDATE_STATUS UPGRADE_STATUS CURL_STATUS
+        UPDATE_STATUS UPGRADE_STATUS CURL_STATUS \
+        SEC_UPDATES_TIMEOUT SEC_UPDATES_UPDATE_TIMEOUT
 }
 
 # the value the dist-upgrade call passed for one apt option
@@ -240,7 +251,7 @@ apt_option() {
     [ -z "$(calls apt-get)" ]
     local said="cannot reach http://security.debian.org/debian-security"
     [[ "$(calls logger)" == *"$said"* ]]
-    [[ "$(calls logger)" == *turnkey-install-security-updates* ]]
+    [[ "$(calls logger)" == *"cron-apt installs them"* ]]
     [[ "$(cat "$SEC_UPDATES_LOG")" == *"$said"* ]]
 }
 
@@ -344,4 +355,213 @@ esac'
     run "$REPO/firstboot.d/95secupdates"
 
     [ "$status" -eq 0 ]
+}
+
+# ------------------------------------------- the update never holds the boot
+#
+# The maintainer's decision (2026-10-03): an unattended first boot installs
+# the security updates, and they never hold it. apt-get update and the
+# upgrade are bounded, a run stopped or failed leaves dpkg configured, and
+# the boot goes on with one line in the inithooks log naming the daily job
+# that installs them instead.
+
+# hang WHEN: apt-get sleeps for good on the call matching WHEN, and
+# answers every other one as the default stub does
+hang() {
+    stub apt-get 'case "$*" in
+'"$1"') echo "apt-get $1 started"; "'"$REAL_SLEEP"'" 300 ;;
+*dist-upgrade*) echo "0 upgraded"; exit "${UPGRADE_STATUS:-0}" ;;
+esac'
+}
+
+# run_bounded: the hook, under an outer limit far above its own, timed
+run_bounded() {
+    local started=$SECONDS
+    run timeout 60 "$REPO/firstboot.d/95secupdates"
+    took=$((SECONDS - started))
+}
+
+# the lines the hook left in the inithooks log
+said() {
+    grep -F '[95secupdates]' "$INITHOOKS_LOGFILE" 2>/dev/null || true
+}
+
+@test "the limits default to 15 minutes for the run and 2 for apt-get update" {
+    run grep -c 'SEC_UPDATES_TIMEOUT:-900}' "$REPO/firstboot.d/95secupdates"
+    [ "$output" = 1 ]
+    run grep -c 'SEC_UPDATES_UPDATE_TIMEOUT:-120}' "$REPO/firstboot.d/95secupdates"
+    [ "$output" = 1 ]
+}
+
+@test "an apt-get update that hangs is stopped at its limit, and the boot goes on" {
+    {
+        echo "export SEC_UPDATES=FORCE"
+        echo "SEC_UPDATES_UPDATE_TIMEOUT=1"
+    } > "$INITHOOKS_CONF"
+    hang 'update*'
+
+    run_bounded
+
+    [ "$status" -eq 0 ]
+    (( took < 10 ))
+    [[ "$(calls apt-get)" != *dist-upgrade* ]]
+    [ ! -e "$SEC_UPDATES_RECORD" ]
+    [ "$(said | wc -l)" -eq 1 ]
+    [[ "$(said)" == *"apt-get update did not finish in 1 s"*cron-apt* ]]
+}
+
+@test "an upgrade that hangs is stopped at the run's limit, and dpkg is configured" {
+    {
+        echo "export SEC_UPDATES=FORCE"
+        echo "SEC_UPDATES_TIMEOUT=2"
+    } > "$INITHOOKS_CONF"
+    hang '*dist-upgrade*'
+    # what a dpkg killed while unpacking leaves
+    export DPKG_AUDIT="libfoo is half configured"
+
+    run_bounded
+
+    [ "$status" -eq 1 ]
+    (( took < 10 ))
+    [ ! -e "$SEC_UPDATES_RECORD" ]
+    # once before the update, and once after the upgrade was stopped
+    [ "$(calls dpkg | grep -c -- '--configure -a')" -eq 2 ]
+    [ "$(said | wc -l)" -eq 1 ]
+    [[ "$(said)" == *"the upgrade did not finish in 2 s"*cron-apt* ]]
+    [ ! -x "$INITHOOKS_PATH/firstboot.d/99reboot" ]
+}
+
+@test "the run's limit holds for apt-get update too" {
+    # the run may be shorter than the update's own limit
+    {
+        echo "export SEC_UPDATES=FORCE"
+        echo "SEC_UPDATES_TIMEOUT=1"
+    } > "$INITHOOKS_CONF"
+    hang 'update*'
+
+    run_bounded
+
+    [ "$status" -eq 0 ]
+    (( took < 10 ))
+    [[ "$(said)" == *"apt-get update did not finish in 1 s"* ]]
+}
+
+@test "an upgrade that fails is said in one line naming the daily job" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+    export UPGRADE_STATUS=100
+
+    run_bounded
+
+    [ "$status" -eq 1 ]
+    [ ! -e "$SEC_UPDATES_RECORD" ]
+    # dpkg was consistent: nothing to configure after the failure
+    [ "$(calls dpkg | grep -c -- '--configure -a')" -eq 1 ]
+    [ "$(said | wc -l)" -eq 1 ]
+    [[ "$(said)" == *"the upgrade failed (exit 100"*cron-apt* ]]
+    [[ "$(calls logger)" == *"the upgrade failed (exit 100"* ]]
+}
+
+@test "an upgrade that succeeds leaves no warning in the inithooks log" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+
+    run_bounded
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SEC_UPDATES_RECORD")" = "force" ]
+    [ -z "$(said)" ]
+}
+
+@test "offline, the one line names the daily job too" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+    export CURL_STATUS=7
+
+    run_bounded
+
+    [ "$status" -eq 0 ]
+    [ "$(said | wc -l)" -eq 1 ]
+    [[ "$(said)" == *"cannot reach"*cron-apt* ]]
+}
+
+@test "without cron-apt's install action the line says how to install them" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+    export UPGRADE_STATUS=100
+    rm "$SEC_UPDATES_CRONAPT"
+
+    run_bounded
+
+    [ "$status" -eq 1 ]
+    [[ "$(said)" != *cron-apt* ]]
+    [[ "$(said)" == *"no daily job installs them"*turnkey-install-security-updates* ]]
+}
+
+@test "a limit that is not a number of seconds is said, and the default used" {
+    {
+        echo "export SEC_UPDATES=FORCE"
+        echo "SEC_UPDATES_TIMEOUT=15m"
+    } > "$INITHOOKS_CONF"
+
+    run_bounded
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SEC_UPDATES_RECORD")" = "force" ]
+    [[ "$(calls logger)" == *"SEC_UPDATES_TIMEOUT=15m is not a number of seconds, 900 used"* ]]
+}
+
+# ------------------------------------------------ the hooks after it still run
+
+# run_firstboot: the real run over 95secupdates and a hook after it
+run_firstboot() {
+    ln -s "$REPO/firstboot.d/95secupdates" "$INITHOOKS_PATH/firstboot.d/95secupdates"
+    printf '#!/bin/bash\necho ran > %q\n' "$BATS_TEST_TMPDIR/next" \
+        > "$INITHOOKS_PATH/firstboot.d/96next"
+    chmod +x "$INITHOOKS_PATH/firstboot.d/96next"
+    stub systemctl 'echo running'
+    stub confconsole
+    stub sleep
+    export INITHOOKS_LOCK=$BATS_TEST_TMPDIR/inithooks.lock
+    export INITHOOKS_COMPLETE=$BATS_TEST_TMPDIR/inithooks-complete
+    {
+        echo "INITHOOKS_LOGFILE=$INITHOOKS_LOGFILE"
+        echo "RUN_FIRSTBOOT=true"
+        echo "REDIRECT_OUTPUT=false"
+    } >> "$INITHOOKS_DEFAULT"
+    local started=$SECONDS
+    run timeout 60 "$REPO/run"
+    took=$((SECONDS - started))
+}
+
+@test "an upgrade that hangs does not stop the hooks after it" {
+    export INITHOOKS_UNATTENDED="the console has no size"
+    echo "SEC_UPDATES_TIMEOUT=2" > "$INITHOOKS_CONF"
+    hang '*dist-upgrade*'
+
+    run_firstboot
+
+    [ "$status" -eq 0 ]
+    (( took < 15 ))
+    [ "$(cat "$BATS_TEST_TMPDIR/next")" = ran ]
+    grep -qF '[95secupdates] failed - exit code 1' "$INITHOOKS_LOGFILE"
+    grep -qF '[96next] successfully completed' "$INITHOOKS_LOGFILE"
+}
+
+@test "an upgrade that fails does not stop the hooks after it" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+    export UPGRADE_STATUS=100
+
+    run_firstboot
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/next")" = ran ]
+    grep -qF '[96next] successfully completed' "$INITHOOKS_LOGFILE"
+}
+
+@test "offline, the hook succeeds and the hooks after it run" {
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+    export CURL_STATUS=7
+
+    run_firstboot
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/next")" = ran ]
+    grep -qF '[95secupdates] successfully completed' "$INITHOOKS_LOGFILE"
 }

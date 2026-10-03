@@ -6,6 +6,13 @@
 # installed as FORCE installs them, what the preseed of a headless build
 # says (README.rst), and 99reboot reboots for a new kernel as it does
 # after FORCE.
+#
+# The updates never hold the boot. apt-get update and the upgrade run within
+# SEC_UPDATES_TIMEOUT seconds in all (15 minutes), apt-get update within
+# SEC_UPDATES_UPDATE_TIMEOUT (2 minutes), both read from the inithooks conf.
+# An apt stopped at its limit, or one that failed, leaves dpkg configured
+# (dpkg --configure -a), and the boot goes on with one line in the inithooks
+# log: the daily job, cron-apt, installs the updates instead.
 
 # every '| tee' below must carry the exit status of what it logs
 set -o pipefail
@@ -33,6 +40,11 @@ SEC_UPDATES_LOG="${SEC_UPDATES_LOG:-/var/log/inithooks/secupdates.log}"
 # common's conf/bootstrap_apt. Every other source is left out on purpose,
 # so the first boot installs security fixes and nothing else.
 SEC_UPDATES_SOURCES="${SEC_UPDATES_SOURCES:-/etc/apt/sources.list.d/security.sources}"
+# cron-apt's install action, written by common's conf/turnkey.d/cronapt:
+# the daily job that installs from the same source what the first boot did
+# not. The images ship cron-apt, not unattended-upgrades.
+SEC_UPDATES_CRONAPT="${SEC_UPDATES_CRONAPT:-/etc/cron-apt/action.d/5-install}"
+INITHOOKS_LOGFILE="${INITHOOKS_LOGFILE:-/var/log/inithooks.log}"
 
 # journal ARGS: logger, which may not fail the hook under -e: journald can
 # be down (15regen-sslcert died of it on 2026-10-03), and the hook's own
@@ -40,6 +52,29 @@ SEC_UPDATES_SOURCES="${SEC_UPDATES_SOURCES:-/etc/apt/sources.list.d/security.sou
 journal() {
     logger -t inithooks "$@" 2>/dev/null || true
 }
+
+# seconds NAME DEFAULT: the limit NAME holds, in whole seconds above 0, or
+# DEFAULT when it holds anything else, said
+seconds() {
+    local name=$1 default=$2
+    local value=${!name}
+    if [[ ! "$value" =~ ^[0-9]+$ ]] || (( 10#$value == 0 )); then
+        journal -p warn \
+            "[95secupdates] $name=$value is not a number of seconds, $default used"
+        value=$default
+    fi
+    echo $((10#$value))
+}
+
+SEC_UPDATES_TIMEOUT="${SEC_UPDATES_TIMEOUT:-900}"
+SEC_UPDATES_UPDATE_TIMEOUT="${SEC_UPDATES_UPDATE_TIMEOUT:-120}"
+SEC_UPDATES_TIMEOUT=$(seconds SEC_UPDATES_TIMEOUT 900)
+SEC_UPDATES_UPDATE_TIMEOUT=$(seconds SEC_UPDATES_UPDATE_TIMEOUT 120)
+# What an apt stopped at its limit gets to exit on SIGTERM before SIGKILL,
+# and what dpkg --configure -a gets afterwards: the boot is not held by
+# the repair either.
+SEC_UPDATES_KILL_AFTER="${SEC_UPDATES_KILL_AFTER:-30}"
+SEC_UPDATES_REPAIR_TIMEOUT="${SEC_UPDATES_REPAIR_TIMEOUT:-300}"
 
 record() {
     if ! { mkdir -p "$(dirname "$SEC_UPDATES_RECORD")" \
@@ -59,14 +94,72 @@ modules_and_boot() {
     ls -la /lib/modules /boot 2>/dev/null || true
 }
 
-# offline MESSAGE: no update can be fetched. Said in the system log and in
-# the hook's own log, and the first boot goes on: a machine with no network
-# yet is not a broken one. Nothing is recorded, since nothing was installed.
-offline() {
-    local msg="[95secupdates] $1; security updates not installed, run turnkey-install-security-updates once the network is up"
+# not_installed WHY: the updates were not installed, for WHY. One line, in
+# the system log, the hook's own log and the inithooks log, naming what
+# installs them instead.
+not_installed() {
+    local after
+    if [[ -e "$SEC_UPDATES_CRONAPT" ]]; then
+        after="the boot goes on and cron-apt installs them at its daily run"
+    else
+        after="the boot goes on, no daily job installs them: run turnkey-install-security-updates"
+    fi
+    local msg="[95secupdates] security updates not installed: $1; $after"
     journal -p warn "$msg"
     echo "WARNING: $msg" >> "$LOGFILE"
+    { echo "WARN: $msg" >> "$INITHOOKS_LOGFILE"; } 2>/dev/null || true
+}
+
+# offline WHY: no update can be fetched, and the first boot goes on: a
+# machine with no network yet is not a broken one. Nothing is recorded,
+# since nothing was installed.
+offline() {
+    not_installed "$1"
     exit 0
+}
+
+# stopped WHAT STATUS: WHAT, an install step, failed or was stopped at the
+# run's limit. dpkg is left configured, the hook fails (run logs it and
+# goes on to the next hook), and nothing is recorded.
+stopped() {
+    local what=$1 status=$2
+    if timed_out "$status"; then
+        not_installed "$what did not finish in $SEC_UPDATES_TIMEOUT s, stopped"
+    else
+        not_installed "$what failed (exit $status, see $LOGFILE)"
+    fi
+    configure_dpkg
+    exit 1
+}
+
+# timed_out STATUS: STATUS is timeout's, for a command it stopped
+timed_out() {
+    [[ "$1" -eq 124 ]] || [[ "$1" -eq 137 ]]
+}
+
+# left: the seconds the run has left, at least 1
+left() {
+    local n=$((deadline - SECONDS))
+    echo $((n > 0 ? n : 1))
+}
+
+# bounded LIMIT CMD...: CMD within LIMIT seconds, its output in the hook's
+# log, its status that of CMD (124 or 137 when stopped). timeout signals
+# the whole process group, so dpkg and the maintainer scripts apt runs
+# stop with it. Nothing is read from the console.
+bounded() {
+    local limit=$1
+    shift
+    timeout --kill-after="$SEC_UPDATES_KILL_AFTER" "$limit" "$@" \
+        </dev/null 2>&1 | tee -a "$LOGFILE"
+}
+
+# configure_dpkg: dpkg --configure -a when a stopped or failed run left
+# packages unpacked or half configured
+configure_dpkg() {
+    [[ -n "$(dpkg --audit 2>/dev/null)" ]] || return 0
+    bounded "$SEC_UPDATES_REPAIR_TIMEOUT" dpkg --force-confdef \
+        --force-confold --configure -a || true
 }
 
 # the InRelease of the first stanza of the security source
@@ -98,6 +191,8 @@ install_updates() {
     if ! curl -fsS --max-time 15 -o /dev/null "$release" 2>/dev/null; then
         offline "cannot reach ${release%/dists/*}"
     fi
+    # the run's limit counts from here, the security archive reachable
+    deadline=$((SECONDS + SEC_UPDATES_TIMEOUT))
     OLDMD5=$(modules_and_boot | md5sum)
     if [[ -n "$(dpkg --audit 2>/dev/null)" ]]; then
         msg="[95secupdates] dpkg in an inconsistent state (see $LOGFILE)"
@@ -105,18 +200,27 @@ install_updates() {
         echo "WARNING: $msg" >> "$LOGFILE"
         dpkg --audit 2>&1 | tee -a "$LOGFILE"
     fi
-    DEBIAN_FRONTEND=noninteractive dpkg --force-confdef --force-confold \
-        --configure -a 2>&1 | tee -a "$LOGFILE"
-    if ! apt-get update 2>&1 | tee -a "$LOGFILE"; then
+    export DEBIAN_FRONTEND=noninteractive
+    local status=0
+    bounded "$(left)" dpkg --force-confdef --force-confold --configure -a \
+        || stopped "dpkg --configure -a" $?
+    local limit=$SEC_UPDATES_UPDATE_TIMEOUT
+    if (( $(left) < limit )); then
+        limit=$(left)
+    fi
+    bounded "$limit" apt-get update || status=$?
+    if timed_out "$status"; then
+        offline "apt-get update did not finish in $limit s"
+    elif [[ "$status" -ne 0 ]]; then
         offline "apt-get update failed (see $LOGFILE)"
     fi
-    DEBIAN_FRONTEND=noninteractive apt-get autoclean -y
-    DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y \
+    bounded "$(left)" apt-get autoclean -y || stopped "apt-get autoclean" $?
+    bounded "$(left)" apt-get dist-upgrade -y \
         -o APT::Get::Show-Upgraded=true \
         -o Dir::Etc::sourceparts=/dev/null \
         -o Dir::Etc::sourcelist="$SEC_UPDATES_SOURCES" \
         -o DPkg::Options::=--force-confdef \
-        -o DPkg::Options::=--force-confold | tee -a "$LOGFILE"
+        -o DPkg::Options::=--force-confold || stopped "the upgrade" $?
 
     NEWMD5=$(modules_and_boot | md5sum)
     if [[ "$NEWMD5" != "$OLDMD5" ]]; then
