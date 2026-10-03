@@ -331,8 +331,10 @@ run_on_unread_terminal() {
 import fcntl, os, pty, struct, subprocess, sys, termios
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+# close_fds=False: the descriptor kcov traces on (tests/coverage.sh) must
+# reach the runner
 proc = subprocess.run([sys.argv[1]], stdin=subprocess.DEVNULL, stdout=slave,
-                      stderr=sys.stderr)
+                      stderr=sys.stderr, close_fds=False)
 sys.exit(proc.returncode)
 PY
 }
@@ -393,10 +395,10 @@ PY
     grep -q "notices not drawn: the console has no size" "$STUBS/logger.calls"
 }
 
-@test "a console that does not take a notice does not hold the boot" {
-    # dialog here writes more than the pty holds, so its write blocks the
-    # way the real one did; the runner gives it NOTICE_TIMEOUT and goes on
-    # without notices
+@test "a sized console nobody reads is found before any notice" {
+    # dialog here writes more than the pty holds, so its write would block
+    # the way the real one did; the console's probe (lib/console.sh) finds
+    # it first, and nothing is drawn
     stub dialog 'printf "%0131072d" 0'
     probe 15first
     probe 30second
@@ -406,9 +408,66 @@ PY
 
     [ "$status" -eq 0 ]
     [ "$(wc -l < "$SEEN")" -eq 3 ]
+    [ -z "$(calls dialog)" ]
+    grep -q "notices not drawn: the console did not take a write in 1 s" \
+        "$ROOT/inithooks.log"
+}
+
+@test "a console that stops taking notices does not hold the boot" {
+    # the probe passes, the notice after it does not reach the console;
+    # the runner gives it NOTICE_TIMEOUT and goes on without notices, and
+    # the hooks after it are told nobody can answer
+    stub dialog 'printf "%0131072d" 0'
+    probe 15first
+    probe 30second 'echo "$INITHOOKS_UNATTENDED" > '"'$ROOT/told'"
+    export CONSOLE_PROBE_BYTES=1
+
+    run_on_unread_terminal
+
+    [ "$status" -eq 0 ]
+    [ "$(wc -l < "$SEEN")" -eq 2 ]
     [ "$(calls dialog | wc -l)" -eq 1 ]
     grep -q "notices not drawn: the console did not take a notice in 1 s" \
         "$ROOT/inithooks.log"
+    [ "$(cat "$ROOT/told")" = "the console did not take a notice in 1 s, nobody is reading it" ]
+}
+
+@test "nobody to answer: the hooks are told, and what they print goes to the log" {
+    # tty1 of a container nobody is attached to holds what is written to
+    # it until its buffer is full, and then blocks the writer for good:
+    # 95secupdates prints the whole upgrade
+    stub dialog
+    probe 15first 'echo "$INITHOOKS_UNATTENDED" > '"'$ROOT/told'"'; echo HOOK-PRINTED'
+
+    run_on_unattended_terminal
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT/told")" = "the console has no size, nobody is attached to it" ]
+    grep -qx HOOK-PRINTED "$ROOT/inithooks.log"
+    [[ "$output" != *HOOK-PRINTED* ]]
+}
+
+@test "nobody to answer: confconsole still gets the console" {
+    # for whoever attaches to it later
+    stub confconsole '[[ -t 1 ]] && echo terminal > '"'$ROOT/confconsole'"
+    probe 15first
+
+    run_on_unattended_terminal
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT/confconsole")" = terminal ]
+}
+
+@test "somebody to answer: the hooks are told, and print on the console" {
+    stub dialog
+    probe 15first 'echo "$INITHOOKS_UNATTENDED" > '"'$ROOT/told'"'; echo HOOK-PRINTED'
+
+    run_on_terminal
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ROOT/told")" = no ]
+    [[ "$output" == *HOOK-PRINTED* ]]
+    run ! grep -q HOOK-PRINTED "$ROOT/inithooks.log"
 }
 
 @test "a run whose output goes to the log draws nothing either" {

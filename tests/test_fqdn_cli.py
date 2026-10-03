@@ -344,6 +344,49 @@ class TestHosts(FqdnCase):
                              "/etc/keel/instance.yaml")
 
 
+class TestMachine(FqdnCase):
+    """--machine: the name the machine has, for a first boot nobody
+    answers and for an operator who skipped, printed as the answer is"""
+
+    def test_the_hostname_and_the_domain_of_its_hosts_line(self):
+        with open(self.hosts, "w") as fob:
+            fob.write("127.0.1.1 keel-web1.pop.coop keel-web1\n")
+
+        status, out, err, console = self.run_fqdn(
+            argv=("--machine", "--current=keel-web1"))
+
+        self.assertEqual((status, err), (0, ""))
+        self.assertEqual(out, "HOSTNAME=keel-web1\nFQDN=keel-web1.pop.coop\n")
+        self.assertEqual(console.calls, [])
+
+    def test_a_hostname_without_a_domain(self):
+        status, out, _, _ = self.run_fqdn(argv=("--machine", "--current=web"))
+
+        self.assertEqual((status, out), (0, "HOSTNAME=web\nFQDN=\n"))
+
+    def test_a_hosts_file_that_does_not_exist_gives_no_domain(self):
+        os.remove(self.hosts)
+
+        status, out, _, _ = self.run_fqdn(argv=("--machine", "--current=web"))
+
+        self.assertEqual((status, out), (0, "HOSTNAME=web\nFQDN=\n"))
+
+    def test_a_hosts_file_that_cannot_be_read_is_fatal(self):
+        os.remove(self.hosts)
+        os.mkdir(self.hosts)
+
+        status, _, err, _ = self.run_fqdn(argv=("--machine", "--current=web"))
+
+        self.assertEqual(status, 1)
+        self.assertIn(self.hosts, err)
+
+    def test_machine_needs_the_current_name(self):
+        status, _, err, _ = self.run_fqdn(argv=("--machine",))
+
+        self.assertEqual(status, 1)
+        self.assertIn("--machine needs --current", err)
+
+
 class TestUsage(FqdnCase):
     def test_an_unknown_option_is_a_usage_error(self):
         status, _, err, _ = self.run_fqdn(argv=("--nonsense",))

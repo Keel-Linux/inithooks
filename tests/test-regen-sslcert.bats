@@ -9,8 +9,14 @@
 # is a side effect of a hook whose job is the certificate, so a logger that
 # fails may not stop it.
 #
-# turnkey-make-ssl-cert, openssl, systemctl, update-ca-certificates, sleep
-# and logger are stubs; `which` is the real one, finding the stubs on PATH.
+# The certificate is for the name the machine has, given to
+# turnkey-make-ssl-cert: without names it took them from `hostname -A`, a
+# reverse lookup of the machine's addresses, and a Web container named web
+# served CN=core (2026-10-03).
+#
+# turnkey-make-ssl-cert, openssl, systemctl, update-ca-certificates, sleep,
+# logger, hostname and bin/fqdn.py are stubs; `which` is the real one,
+# finding the stubs on PATH.
 
 bats_require_minimum_version 1.5.0
 
@@ -31,17 +37,53 @@ if (( n <= ${OPENSSL_DIFFER:-0} )); then echo "md5 $n"; else echo "md5 same"; fi
 fi'
     stub update-ca-certificates
     stub sleep
+    stub hostname 'if [[ $# -eq 0 ]]; then echo blog; else exit 1; fi'
+    export INITHOOKS_PATH=$BATS_TEST_TMPDIR/inithooks
+    mkdir -p "$INITHOOKS_PATH/bin"
+    ln -s "$REPO/lib" "$INITHOOKS_PATH/lib"
+    # the name the machine has, as 31fqdn writes it into /etc/hosts
+    cat > "$INITHOOKS_PATH/bin/fqdn.py" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >> '$STUBS/fqdn.py.calls'
+printf '%s' "\${MACHINE-HOSTNAME=blog
+FQDN=blog.example.org
+}"
+EOF
+    chmod +x "$INITHOOKS_PATH/bin/fqdn.py"
     export INITHOOKS_CONF=$BATS_TEST_TMPDIR/inithooks.conf
-    unset _TURNKEY_INIT RUNNING OPENSSL_DIFFER
+    export INITHOOKS_DEFAULT=$BATS_TEST_TMPDIR/default-inithooks
+    {
+        echo "INITHOOKS_PATH=$INITHOOKS_PATH"
+        echo "INITHOOKS_CONF=$INITHOOKS_CONF"
+    } > "$INITHOOKS_DEFAULT"
+    unset _TURNKEY_INIT RUNNING OPENSSL_DIFFER MACHINE
 }
 
 @test "the certificate is made and the trust store updated" {
     run "$REPO/firstboot.d/15regen-sslcert"
 
     [ "$status" -eq 0 ]
-    [ "$(calls turnkey-make-ssl-cert)" = "--default --force" ]
+    [ "$(calls turnkey-make-ssl-cert)" = "--default --force --ip blog.example.org blog" ]
     [ -e "$STUBS/update-ca-certificates.calls" ]
     [[ "$output" == *"Generating SSL/TLS cert & key"* ]]
+}
+
+@test "the certificate is for the name the machine has, not a reverse lookup" {
+    run "$REPO/firstboot.d/15regen-sslcert"
+
+    [ "$status" -eq 0 ]
+    [ "$(calls fqdn.py)" = "--machine --current=blog" ]
+    # hostname answered its name only: no -A, no -f
+    [ -z "$(calls hostname)" ]
+}
+
+@test "a machine without a domain gets a certificate for its hostname" {
+    export MACHINE=$'HOSTNAME=web\nFQDN=\n'
+
+    run "$REPO/firstboot.d/15regen-sslcert"
+
+    [ "$status" -eq 0 ]
+    [ "$(calls turnkey-make-ssl-cert)" = "--default --force --ip web" ]
 }
 
 @test "a logger that fails does not stop the hook" {
@@ -52,7 +94,7 @@ fi'
     run --separate-stderr "$REPO/firstboot.d/15regen-sslcert"
 
     [ "$status" -eq 0 ]
-    [ "$(calls turnkey-make-ssl-cert)" = "--default --force" ]
+    [ "$(calls turnkey-make-ssl-cert)" = "--default --force --ip blog.example.org blog" ]
     [ -e "$STUBS/update-ca-certificates.calls" ]
     [[ "$output" == *"Restarting relevant services"* ]]
     [[ "$stderr" != *"Connection refused"* ]]

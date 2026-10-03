@@ -2,9 +2,9 @@
 # Copyright (c) 2026 Keel Linux maintainers
 """Ask the machine's fully qualified domain name, and record it
 
-Run by firstboot.d/31fqdn, three times: to ask, to record the answer in
-the instance description, and, once the machine is renamed, to write the
-/etc/hosts entry.
+Run by firstboot.d/31fqdn: to ask, to record the answer in the instance
+description, and, once the machine is renamed, to write the /etc/hosts
+entry; and, when the machine keeps its name, to say what that name is.
 
 Options:
     --fqdn=         the name; if not provided, will ask interactively,
@@ -17,6 +17,9 @@ Options:
     --hosts         write the name given with --hostname and --fqdn into
                     the hosts file, and ask nothing
     --hostname=     with --record or --hosts: the hostname
+    --machine       print the name the machine has, given with --current,
+                    the way an answer is printed, and ask nothing: its
+                    domain is the one its line in the hosts file gives it
 
 Asked or preseeded, the answer is printed as two lines for the hook:
 HOSTNAME=<the hostname> and FQDN=<the name, empty without a domain>. The
@@ -116,6 +119,17 @@ def record(hostname: str, name: str) -> None:
         fatal(e)
 
 
+def machine(current: str) -> None:
+    """Print the name the machine has, as an answer is printed"""
+    try:
+        text = fqdn.read_hosts(hosts_path())
+    except fqdn.FqdnError as e:
+        fatal(e)
+    hostname, name = fqdn.machine(current, text)
+    print(f"HOSTNAME={hostname}")
+    print(f"FQDN={name}")
+
+
 def hosts(hostname: str, name: str) -> None:
     try:
         fqdn.write_hosts(hosts_path(), hostname, name)
@@ -127,7 +141,7 @@ def main():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
         l_opts = ["help", "fqdn=", "current=", "record", "hosts",
-                  "hostname="]
+                  "hostname=", "machine"]
         opts, args = getopt.gnu_getopt(sys.argv[1:], "h", l_opts)
     except getopt.GetoptError as e:
         usage(e)
@@ -146,9 +160,14 @@ def main():
             current = val
         elif opt == "--hostname":
             hostname = val
-        else:  # --record or --hosts, the writes
+        else:  # --record, --hosts or --machine, which ask nothing
             action = opt
 
+    if action == "--machine":
+        if not current:
+            usage("--machine needs --current")
+        machine(current)
+        return
     if action:
         if not hostname:
             usage(f"{action} needs --hostname")

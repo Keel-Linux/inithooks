@@ -1,12 +1,25 @@
 #!/bin/bash -e
 # enable security alert emails
 # SEC_ALERTS: SKIP, $EMAIL (if none specified, will be interactive)
+#
+# When nobody can answer the console (lib/console.sh), no email is set,
+# as Skip on the screen does.
 
-. /etc/default/inithooks
+INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
+# shellcheck source=default/inithooks
+. "$INITHOOKS_DEFAULT"
+# shellcheck source=lib/console.sh
+. "$INITHOOKS_PATH/lib/console.sh"
 
-[ -e $INITHOOKS_CONF ] && . $INITHOOKS_CONF
+# shellcheck disable=SC1090
+[ -e "$INITHOOKS_CONF" ] && . "$INITHOOKS_CONF"
 [ "$SEC_ALERTS" == "SKIP" ] && exit 0
 
-$INITHOOKS_PATH/bin/secalerts.py \
+if [ -z "$SEC_ALERTS" ] && console_unattended; then
+    console_skipped 85secalerts "no alert email is set, as Skip does; preseed SEC_ALERTS to set one"
+    exit 0
+fi
+
+"$INITHOOKS_PATH/bin/secalerts.py" \
     --email="$SEC_ALERTS" \
-    --email-placeholder="$($INITHOOKS_PATH/bin/inithooks_cache.py APP_EMAIL)"
+    --email-placeholder="$("$INITHOOKS_PATH/bin/inithooks_cache.py" APP_EMAIL)"

@@ -1,6 +1,11 @@
 #!/bin/bash -e
 # install security updates
 # SEC_UPDATES: SKIP, FORCE (if none specified, will be interactive)
+#
+# When nobody can answer the console (lib/console.sh), the updates are
+# installed as FORCE installs them, what the preseed of a headless build
+# says (README.rst), and 99reboot reboots for a new kernel as it does
+# after FORCE.
 
 # every '| tee' below must carry the exit status of what it logs
 set -o pipefail
@@ -8,6 +13,8 @@ set -o pipefail
 INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
 # shellcheck source=default/inithooks
 source "$INITHOOKS_DEFAULT"
+# shellcheck source=lib/console.sh
+source "$INITHOOKS_PATH/lib/console.sh"
 if [[ -e "$INITHOOKS_CONF" ]]; then
     # shellcheck disable=SC1090
     source "$INITHOOKS_CONF"
@@ -132,6 +139,14 @@ elif [[ "$SEC_UPDATES" == "force" ]]; then
 elif [[ -n "$SEC_UPDATES" ]]; then
     journal -p err "[95secupdates] invalid preseed value: $SEC_UPDATES"
     exit 1
+fi
+
+if console_unattended; then
+    console_skipped 95secupdates "security updates installed, as SEC_UPDATES=FORCE does"
+    journal "[95secupdates] security updates being installed"
+    install_updates
+    record force
+    exit 0
 fi
 
 # interactive

@@ -122,7 +122,7 @@ def hosts_with_name(text: str, hostname: str, fqdn: str) -> str:
     blanks included, stays as it was; without a line to rewrite the entry
     is appended, at LOOPBACK.
     """
-    names = [fqdn, hostname] if fqdn else [hostname]
+    names = [fqdn, hostname] if fqdn and fqdn != hostname else [hostname]
     lines = text.splitlines()
     address = next((line.split()[0] for line in lines
                     if _superseded(line, hostname)), LOOPBACK)
@@ -139,6 +139,58 @@ def hosts_with_name(text: str, hostname: str, fqdn: str) -> str:
     if not written:
         kept.append(entry)
     return "".join(f"{line}\n" for line in kept)
+
+
+def in_hosts(text: str, hostname: str) -> str:
+    """The dotted name /etc/hosts TEXT gives HOSTNAME, "" for none
+
+    Read from the first line that names the host, as a whole name or as
+    the first label of a dotted one, as keel inspect reads it
+    (keel.inspect.hostname.fqdn_in_hosts): a resolver answers from the
+    first line that carries the name, so a later line does not give the
+    host a name `hostname -f` answers.
+    """
+    for line in text.splitlines():
+        fields = line.split()
+        if line.strip().startswith("#") or len(fields) < 2:
+            continue
+        names = [one.lower() for one in fields[1:]]
+        if not any(one.split(".")[0] == hostname.lower() for one in names):
+            continue
+        return next((one for one in names if "." in one), "")
+    return ""
+
+
+def machine(current: str, hosts_text: str) -> tuple[str, str]:
+    """(hostname, fqdn): the name the machine has, for a first boot that
+    keeps it (nobody can answer, or FQDN=SKIP)
+
+    CURRENT is what `hostname` answers, the name pct create --hostname
+    gave a container. A dotted one is the fqdn, and its first label the
+    hostname; otherwise the fqdn is the dotted name the host's line in
+    /etc/hosts gives it (pct writes `127.0.1.1 name.domain name` with the
+    host's search domain), else none. A name that is not a domain name
+    gives no fqdn, and the hostname is kept as it is.
+    """
+    name, problem = normalize(current)
+    if problem or not name:
+        return current, ""
+    hostname, fqdn = split(name)
+    if fqdn:
+        return hostname, fqdn
+    found, problem = normalize(in_hosts(hosts_text, hostname))
+    return hostname, "" if problem else found
+
+
+def read_hosts(path: str) -> str:
+    """The hosts file at PATH, "" when there is none"""
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path) as fob:
+            return fob.read()
+    except OSError as error:
+        raise FqdnError(f"{path}: {error.strerror}")
 
 
 def _superseded(line: str, hostname: str) -> bool:
@@ -243,13 +295,7 @@ def write_spec(path: str, document: Mapping[str, Any]) -> None:
 
 def write_hosts(path: str, hostname: str, fqdn: str) -> None:
     """Write the entry for HOSTNAME and FQDN into the hosts file at PATH"""
-    text = ""
-    if os.path.exists(path):
-        try:
-            with open(path) as fob:
-                text = fob.read()
-        except OSError as error:
-            raise FqdnError(f"{path}: {error.strerror}")
+    text = read_hosts(path)
     staged = _write_beside(path, hosts_with_name(text, hostname, fqdn),
                            ".fqdn-tmp")
     os.chmod(staged, _mode(path, HOSTS_MODE))

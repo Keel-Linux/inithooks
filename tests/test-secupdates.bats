@@ -36,6 +36,7 @@ exit "${LS_STATUS:-0}"'
 
     export INITHOOKS_PATH=$BATS_TEST_TMPDIR/inithooks
     mkdir -p "$INITHOOKS_PATH/bin" "$INITHOOKS_PATH/firstboot.d"
+    ln -s "$REPO/lib" "$INITHOOKS_PATH/lib"
     touch "$INITHOOKS_PATH/firstboot.d/99reboot"
     printf '#!/bin/bash\nexit "${ASK_STATUS:-0}"\n' \
         > "$INITHOOKS_PATH/bin/secupdates-ask.py"
@@ -52,6 +53,10 @@ exit "${LS_STATUS:-0}"'
     export SEC_UPDATES_SOURCES=$BATS_TEST_TMPDIR/security.sources
     printf 'Types: deb\nURIs: http://security.debian.org/debian-security\nSuites: trixie-security\nComponents: main\n' \
         > "$SEC_UPDATES_SOURCES"
+    # somebody can answer the console (lib/console.sh), unless a test
+    # says otherwise
+    export INITHOOKS_UNATTENDED=no
+    export INITHOOKS_LOGFILE=$BATS_TEST_TMPDIR/inithooks.log
     unset SEC_UPDATES DPKG_AUDIT LS_CHANGES LS_STATUS ASK_STATUS \
         UPDATE_STATUS UPGRADE_STATUS CURL_STATUS
 }
@@ -80,6 +85,30 @@ apt_option() {
     [ "$(cat "$SEC_UPDATES_RECORD")" = "force" ]
     [[ "$(calls apt-get)" == *"dist-upgrade -y"* ]]
     [ ! -x "$INITHOOKS_PATH/firstboot.d/99reboot" ]
+}
+
+@test "nobody to answer: the updates are installed as FORCE installs them" {
+    # what the preseed of a headless build says (README.rst)
+    export INITHOOKS_UNATTENDED="the console has no size"
+    export ASK_STATUS=99
+
+    run --separate-stderr "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SEC_UPDATES_RECORD")" = "force" ]
+    [[ "$(calls apt-get)" == *"dist-upgrade -y"* ]]
+    [ "$(cat "$INITHOOKS_LOGFILE")" = "INFO: [95secupdates] not asked, nobody can answer (the console has no size): security updates installed, as SEC_UPDATES=FORCE does" ]
+}
+
+@test "nobody to answer a preseeded SKIP: nothing is installed" {
+    export INITHOOKS_UNATTENDED="the console has no size"
+    echo "export SEC_UPDATES=SKIP" > "$INITHOOKS_CONF"
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SEC_UPDATES_RECORD")" = "skip" ]
+    [ -z "$(calls apt-get)" ]
 }
 
 @test "Skip on the screen records skip" {

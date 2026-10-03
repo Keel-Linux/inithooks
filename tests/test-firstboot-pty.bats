@@ -37,6 +37,7 @@ setup() {
     NEXT=$ROOT/next-hook-ran
     mkdir -p "$LIB/firstboot.d" "$LIB/bin"
     cp "$REPO/firstboot.d/30rootpass" "$LIB/firstboot.d/"
+    ln -s "$REPO/lib" "$LIB/lib"
     ln -s "$REPO/bin/setpass.py" "$LIB/bin/setpass.py"
     # the screen after the password, drawn as the next hook draws its own
     cat > "$LIB/firstboot.d/80next" <<EOF

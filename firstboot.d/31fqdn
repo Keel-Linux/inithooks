@@ -15,11 +15,27 @@
 # leaves a machine whose description says what it should be, not one
 # renamed with no record of it. The /etc/hosts entry comes after the
 # rename, which replaces the old name wherever it stands. An answer that
-# changes nothing writes nothing.
+# changes nothing leaves every file as it was.
 #
 # FQDN: SKIP, the name (if none specified, will be interactive). The
 # instance description renders instance.fqdn as FQDN (00declarative), so a
 # described machine is not asked.
+#
+# Whatever the answer, and with none, the hook ends with the /etc/hosts
+# entry for the name the machine has, `127.0.1.1 <fqdn> <hostname>`, or
+# `127.0.1.1 <hostname>` without a domain, the form keel spec apply
+# --system writes: the image ships no such line (common's seal-hostname),
+# so the first boot is its one writer, also after SKIP or an empty
+# answer. The machine keeps its name then, with the domain its line in
+# /etc/hosts already gives it (bin/fqdn.py --machine). Then the self-signed
+# certificate is made again when it is not for that name
+# (lib/sslcert.sh): 15regen-sslcert made it before the name was settled.
+#
+# When nobody can answer the console (lib/console.sh), nothing is asked:
+# the machine keeps its name, as with an empty answer, and when that name
+# is a fully qualified one (pct create --hostname, or the domain of its
+# hosts line) it is recorded as instance.hostname and instance.fqdn, so
+# the description says what the machine is.
 #
 # Position: an interactive hook is numbered 30 or above (run waits for the
 # boot to finish from 30 on, so the screen is not drawn over); after
@@ -31,37 +47,84 @@ INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
 source "$INITHOOKS_DEFAULT"
 # shellcheck source=lib/hostname.sh
 source "$INITHOOKS_PATH/lib/hostname.sh"
+# shellcheck source=lib/console.sh
+source "$INITHOOKS_PATH/lib/console.sh"
+# shellcheck source=lib/sslcert.sh
+source "$INITHOOKS_PATH/lib/sslcert.sh"
 
 if [[ -e "$INITHOOKS_CONF" ]]; then
     # shellcheck source=/dev/null
     source "$INITHOOKS_CONF"
 fi
 
-[[ "${FQDN^^}" == "SKIP" ]] && exit 0
+HOOK=31fqdn
+
+# names ANSWER
+# Reads the HOSTNAME= and FQDN= lines fqdn.py prints into name_hostname
+# and name_fqdn.
+names() {
+    local key value
+    name_hostname=
+    name_fqdn=
+    while IFS='=' read -r key value; do
+        case $key in
+            HOSTNAME) name_hostname=$value ;;
+            FQDN) name_fqdn=$value ;;
+            *) echo "31fqdn: unexpected answer from fqdn.py: $key" >&2; exit 1 ;;
+        esac
+    done <<< "$1"
+    if [[ -z "$name_hostname" ]]; then
+        echo "31fqdn: fqdn.py answered without a hostname" >&2
+        exit 1
+    fi
+}
+
+# settle: the hosts entry and the certificate for name_hostname and
+# name_fqdn. The certificate's lines go to stderr, the journal: the
+# console may not take them.
+settle() {
+    "$INITHOOKS_PATH/bin/fqdn.py" --hosts --hostname="$name_hostname" \
+        --fqdn="$name_fqdn"
+    sslcert_follow >&2
+}
+
+# keep: the machine keeps the name it has
+keep() {
+    names "$("$INITHOOKS_PATH/bin/fqdn.py" --machine --current="$(hostname)")"
+}
+
+if [[ "${FQDN^^}" == "SKIP" ]]; then
+    keep
+    settle
+    exit 0
+fi
+
+if [[ -z "$FQDN" ]] && console_unattended; then
+    keep
+    if [[ -n "$name_fqdn" ]]; then
+        "$INITHOOKS_PATH/bin/fqdn.py" --record --hostname="$name_hostname" \
+            --fqdn="$name_fqdn"
+        console_skipped 31fqdn "the machine keeps its name $name_fqdn, recorded as instance.fqdn"
+    else
+        console_skipped 31fqdn "the machine keeps its name $name_hostname, which has no domain: no instance.fqdn recorded"
+    fi
+    settle
+    exit 0
+fi
 
 # the screen prints HOSTNAME= and FQDN= once the operator has answered,
 # and nothing when the machine keeps its name
 answer=$("$INITHOOKS_PATH/bin/fqdn.py" --fqdn="$FQDN" --current="$(hostname)")
-[[ -n "$answer" ]] || exit 0
-
-new_hostname=
-new_fqdn=
-while IFS='=' read -r key value; do
-    case $key in
-        HOSTNAME) new_hostname=$value ;;
-        FQDN) new_fqdn=$value ;;
-        *) echo "31fqdn: unexpected answer from fqdn.py: $key" >&2; exit 1 ;;
-    esac
-done <<< "$answer"
-if [[ -z "$new_hostname" ]]; then
-    echo "31fqdn: fqdn.py answered without a hostname" >&2
-    exit 1
+if [[ -z "$answer" ]]; then
+    keep
+    settle
+    exit 0
 fi
+names "$answer"
 
-"$INITHOOKS_PATH/bin/fqdn.py" --record --hostname="$new_hostname" \
-    --fqdn="$new_fqdn"
+"$INITHOOKS_PATH/bin/fqdn.py" --record --hostname="$name_hostname" \
+    --fqdn="$name_fqdn"
 
-hostname_set "$new_hostname"
+hostname_set "$name_hostname"
 
-"$INITHOOKS_PATH/bin/fqdn.py" --hosts --hostname="$new_hostname" \
-    --fqdn="$new_fqdn"
+settle
