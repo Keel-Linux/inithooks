@@ -4,7 +4,9 @@
 # ROOT_PASS preseeded (or rendered from secrets.root_password by
 # 00declarative) sets it without a screen. Otherwise setpass.py asks, and
 # offers to keep a password set before the first boot (pct create
-# --password, or LXC in the root file system) when there is one.
+# --password, or LXC in the root file system) when there is one. When
+# nobody can answer the console (lib/console.sh), the password stays as
+# the machine has it, set before the first boot or locked, as Keep does.
 
 USERNAME=root
 
@@ -13,6 +15,14 @@ INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
 . "$INITHOOKS_DEFAULT"
 [ "$(echo "$SUDOADMIN" | tr '[:upper:]' '[:lower:]')" = "true" ] && USERNAME="admin"
 
+# shellcheck source=lib/console.sh
+. "$INITHOOKS_PATH/lib/console.sh"
+
 # shellcheck disable=SC1090
 [ -e "$INITHOOKS_CONF" ] && . "$INITHOOKS_CONF"
+
+if [ -z "$ROOT_PASS" ] && console_unattended; then
+    console_skipped 30rootpass "the $USERNAME password stays as the machine has it (pct create --password, or locked); keel-init asks it"
+    exit 0
+fi
 "$INITHOOKS_PATH/bin/setpass.py" "$USERNAME" --pass="$ROOT_PASS"

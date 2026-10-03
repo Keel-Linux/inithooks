@@ -263,6 +263,67 @@ class TestHostsWithName(unittest.TestCase):
         self.assertIn("127.0.1.1 blog\n", text)
         self.assertNotIn("blog.example.org", text)
 
+    def test_a_hostname_that_is_the_fqdn_is_named_once(self):
+        text = fqdn.hosts_with_name("127.0.0.1 localhost\n",
+                                    "blog.example.org", "blog.example.org")
+
+        self.assertEqual(text, "127.0.0.1 localhost\n"
+                               "127.0.1.1 blog.example.org\n")
+
+
+class TestInHosts(unittest.TestCase):
+    """The dotted name /etc/hosts gives the host, as keel inspect reads it
+    (keel.inspect.hostname.fqdn_in_hosts): from the first line naming it"""
+
+    def test_the_dotted_name_on_the_host_s_line(self):
+        # what pct writes for a container whose host has a search domain
+        text = "127.0.0.1 localhost\n127.0.1.1 web1.pop.coop web1\n"
+
+        self.assertEqual(fqdn.in_hosts(text, "web1"), "web1.pop.coop")
+
+    def test_nothing_when_no_line_names_the_host(self):
+        self.assertEqual(fqdn.in_hosts("127.0.0.1 localhost\n", "web"), "")
+
+    def test_nothing_when_the_first_line_naming_it_has_no_domain(self):
+        # a resolver answers from the first line, so the later one does
+        # not give the host its name
+        text = "127.0.1.1 web\n192.0.2.10 web.example.org web\n"
+
+        self.assertEqual(fqdn.in_hosts(text, "web"), "")
+
+    def test_comments_and_short_lines_are_not_entries(self):
+        text = "# 127.0.1.1 web.example.org web\nweb\n"
+
+        self.assertEqual(fqdn.in_hosts(text, "web"), "")
+
+    def test_the_host_is_matched_without_case_and_as_a_first_label(self):
+        text = "127.0.1.1 Web.Example.org\n"
+
+        self.assertEqual(fqdn.in_hosts(text, "web"), "web.example.org")
+
+
+class TestMachine(unittest.TestCase):
+    """(hostname, fqdn) the machine has, for a first boot nobody answers"""
+
+    def test_a_hostname_alone_has_no_domain(self):
+        self.assertEqual(fqdn.machine("web", DEBIAN_HOSTS.replace(
+            "blog", "web")), ("web", ""))
+
+    def test_the_domain_comes_from_the_host_s_line(self):
+        text = "127.0.1.1 keel-web1.pop.coop keel-web1\n"
+
+        self.assertEqual(fqdn.machine("keel-web1", text),
+                         ("keel-web1", "keel-web1.pop.coop"))
+
+    def test_a_dotted_hostname_is_the_fqdn_and_its_first_label(self):
+        self.assertEqual(fqdn.machine("Web.Example.org.", ""),
+                         ("web", "web.example.org"))
+
+    def test_a_name_that_is_no_domain_name_gives_no_fqdn(self):
+        text = "127.0.1.1 web_1.example.org web_1\n"
+
+        self.assertEqual(fqdn.machine("web_1", text), ("web_1", ""))
+
 
 class TestUpdated(unittest.TestCase):
     def test_a_new_description_gets_version_instance_and_domains(self):

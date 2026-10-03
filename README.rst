@@ -378,13 +378,39 @@ configuration variables into it before the first system boot. For example::
     export DB_PASS=supersecretmysqlpass
     export APP_EMAIL=admin@example.com
     export APP_PASS=webappadminpassword
+    export FQDN=blog.example.org
     export SEC_ALERTS=admin@example.com
     export SEC_UPDATES=FORCE
     export HUB_APIKEY=SKIP
     EOF
 
+FQDN is the machine's fully qualified domain name (firstboot.d/31fqdn): it
+becomes the hostname, the /etc/hosts entry and the name of the self-signed
+certificate, and is recorded in the instance description. FQDN=SKIP keeps
+the name the machine has.
+
 This preseeding mechanism makes it relatively easy to integrate TurnKey
 with custom control panels, virtualization solutions, etc.
+
+A first boot nobody can answer skips the questions. When the console has
+no size (the tty of an LXC container nobody is attached to with pct
+console or lxc-console), does not take a write (one nobody reads), or
+there is no terminal at all, every hook that would draw a screen asks
+nothing and does what it does without an answer, saying so in one line
+of /var/log/inithooks.log and the journal (lib/console.sh):
+
+- 30rootpass keeps the password the machine has (pct create --password),
+  or none;
+- 31fqdn keeps the name the machine has and records it in the instance
+  description when it has a domain;
+- 75keel-role and 80keel-cloud leave the node standalone, without a Keel
+  Cloud key;
+- 85secalerts sets no alert email;
+- 95secupdates installs the security updates, and 99reboot reboots for a
+  new kernel, as SEC_UPDATES=FORCE does.
+
+A preseeded value is always used. Run keel-init afterwards to answer what
+was skipped.
 
 Don't worry about leaving sensitive passwords in there: after the first boot,
 inithooks blanks /etc/inithooks.conf out so important passwords aren't

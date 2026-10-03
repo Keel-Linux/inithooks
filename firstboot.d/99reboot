@@ -1,11 +1,20 @@
 #!/bin/bash -e
 # reboot system (kernel upgrade, set chmod +x by 95secupdates)
 # will be skipped if running live or REBOOT set to SKIP
+#
+# When nobody can answer the console (lib/console.sh), the machine reboots
+# as it does after SEC_UPDATES=FORCE: 95secupdates installed the updates
+# the same way.
 
-chmod -x $0 # self-deactivating
+chmod -x "$0" # self-deactivating
 
-. /etc/default/inithooks
-[ -e $INITHOOKS_CONF ] && . $INITHOOKS_CONF
+INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
+# shellcheck source=default/inithooks
+. "$INITHOOKS_DEFAULT"
+# shellcheck source=lib/console.sh
+. "$INITHOOKS_PATH/lib/console.sh"
+# shellcheck disable=SC1090
+[ -e "$INITHOOKS_CONF" ] && . "$INITHOOKS_CONF"
 
 grep -qs boot=live /proc/cmdline && exit 2
 
@@ -18,6 +27,9 @@ reboot() {
 if [ "$SEC_UPDATES" == "FORCE" ]; then
     echo "rebooting due to kernel security upgrade..."
     reboot
+elif console_unattended; then
+    console_skipped 99reboot "rebooting for the new kernel, as SEC_UPDATES=FORCE does"
+    reboot
 else
-    $INITHOOKS_PATH/bin/reboot-ask.py && reboot
+    "$INITHOOKS_PATH/bin/reboot-ask.py" && reboot
 fi

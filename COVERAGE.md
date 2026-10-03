@@ -4,6 +4,25 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/headless-first-boot: shell 99.69, Python 99 (2026-10-03)
+
+A first boot nobody can answer, the hosts entry and the certificate's
+name. `lib/console.sh` is new, 22/22, and `lib/sslcert.sh`, 51/51, takes
+the body of `firstboot.d/15regen-sslcert` (9/9 now). The new
+`tests/test-console.bats` (23 tests) runs the rule on ptys whose master
+is never read, unsized and sized, on a read pty under `script`, on the
+controlling terminal and with none, and every hook that draws a screen
+on both unread ptys within a deadline, its screen a stand-in that never
+returns (31fqdn's the real `bin/fqdn.py`). The python pty harnesses of
+this file and `test-run.bats` keep kcov's trace descriptor open
+(`close_fds=False`): with it closed, what ran under them was not
+measured. `firstboot.d/31fqdn` 43/43, with the hosts entry after SKIP, an
+empty answer and nobody to answer, and the certificate made again after
+a rename (real openssl), kept when it is for the name, signed by an
+authority, or unreadable. `bin/fqdn.py` and `libinithooks/fqdn.py` stay
+at 100 percent with `--machine`, `in_hosts` and `machine`. 367 bats, 530
+pytest; shell total 99.69, Python 99.
+
 ## Branch fix/first-boot-without-journal-or-console: shell 99.64 (2026-10-03)
 
 Two first boot stalls of the published core booted headless.

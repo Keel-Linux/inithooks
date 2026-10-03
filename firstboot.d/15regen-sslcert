@@ -1,71 +1,21 @@
 #!/bin/bash -e
-# Regenerate self-signed TLS/SSL cert & key
+# Regenerate self-signed TLS/SSL cert & key, for the name the machine has
+# (lib/sslcert.sh); 31fqdn makes it again when it settles another name.
 
 [[ -n "$_TURNKEY_INIT" ]] && exit 0
 
+INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
+# shellcheck source=default/inithooks
+source "$INITHOOKS_DEFAULT"
+# shellcheck source=lib/sslcert.sh
+source "$INITHOOKS_PATH/lib/sslcert.sh"
+
 [[ -e $INITHOOKS_CONF ]] && . "$INITHOOKS_CONF"
 
-_hook=$(basename "$0")
+HOOK=$(basename "$0")
 
-
-# The journal is a side effect of a hook whose job is the certificate:
-# under -e a logger that fails (journald down, "socket /dev/log: Connection
-# refused", the published core 19.0-6 booted headless on 2026-10-03) killed
-# the hook at its first line, so it may not fail the hook.
-log() {
-    local level=$1
-    shift
-    logger -t inithooks -p "$level" "[$_hook] $*" 2>/dev/null || true
-}
-
-fatal() { log 3 "$*"; echo "FATAL: [$_hook] $*" 1>&2 ; exit 1 ; }
-info() { log 5 "$*"; echo "INFO: [$_hook] $*" ; }
-
-
-# Check for 'turnkey-make-ssl-cert' - should be provided by
-# turnkey-ssl package.
-turnkey_make_ssl_cert=$(which turnkey-make-ssl-cert) \
-    || fatal "turnkey-make-ssl-cert executable not found."
-
-# We use predefined 4096 bits default dhparams file for TLS1.2 (not needed for
-# TLS1.3)
-# See https://github.com/turnkeylinux/tracker/issues/1653 for more info.
-info "Generating SSL/TLS cert & key."
-$turnkey_make_ssl_cert --default --force
-
-# Restart relevant services
-SERVICES=(nginx apache2 lighttpd tomcat10 tomcat11 webmin)
-
-# make sure that generated keys are ready to use - avoids occasional race
-# condition where cert & key don't (yet) match. a single sleep should be plenty
-# but let's be sure
-# modulus_md5 KIND FILE: the md5 of the modulus of the x509 or rsa FILE
-modulus_md5() { openssl "$1" -noout -modulus -in "$2" | openssl md5; }
-
-for _wait in {1..5}; do
-    cert_md5=$(modulus_md5 x509 /etc/ssl/private/cert.pem)
-    key_md5=$(modulus_md5 rsa /etc/ssl/private/cert.key)
-    if [[ "$cert_md5" == "$key_md5" ]]; then
-        info "SSL cert and key have been written - ready to restart services"
-        break
-    elif [[ $_wait -eq 1 ]]; then
-        info "Waiting for updated ssl cert & key to be written to disk"
-    else
-        echo "..."
-    fi
-    sleep 1
-done
-
-info "Restarting relevant services."
-for service in "${SERVICES[@]}"; do
-    # only restart services that are running
-    if systemctl is-active --quiet "${service}.service"; then
-        info "$service running; restarting..."
-        systemctl restart --quiet "$service"
-    fi
-done
-
-# final tidy up
-update-ca-certificates
+names=$(sslcert_names)
+# shellcheck disable=SC2086 # the names are words
+sslcert_make $names
 
 exit 0

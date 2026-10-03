@@ -19,6 +19,10 @@
   that stops answering and on a screen drawn into a pipe, which never
   reaches the pty. Only `chpasswd` and `passwd` are stubs. Needs `dialog`
   and `python3-dialog`; skipped without them, except in CI.
+- `test-console.bats`: `lib/console.sh`, whether anybody can answer a first
+  boot screen, and every hook that draws one, each run on a pty whose
+  master is never read, with no size and with one, within a deadline: a
+  hook that asks fails instead of hanging.
 - `helpers.bash`: the stub helpers (`setup_stubs`, `stub`, `calls`), and
   `eventually` and `let_go` for tests that wait on another process.
 - `test_init_lock.py`: pytest tests of the first boot lock

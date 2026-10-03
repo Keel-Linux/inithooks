@@ -8,6 +8,10 @@
 # shellcheck source=lib/init-lock.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/init-lock.sh"
 init_lock_take "$INITHOOKS_LOCK" || exit 1
+# whether anybody can answer the console, asked once for the notices and
+# handed to the hooks in INITHOOKS_UNATTENDED
+# shellcheck source=lib/console.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/console.sh"
 
 # load/set general global vars
 INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
@@ -53,6 +57,8 @@ BOOT_WAITED=
 # given up for this run.
 NOTICE_TIMEOUT="${NOTICE_TIMEOUT:-2}"
 NOTICES_OFF=
+# where the hooks print, once nobody can answer the console
+HOOK_OUTPUT=
 
 # notice TEXT
 # Shows TEXT in a box on the terminal the hooks draw on, and goes on: the
@@ -66,31 +72,40 @@ NOTICES_OFF=
 # master only an attached console (pct console, lxc-console) reads: with
 # nobody attached, the published core booted headless on 2026-10-03 wrote
 # one box per hook until the pty's buffer was full and the next write
-# blocked for good, after 30turnkey-init-fence. Such a console has no size
-# (stty answers 0 0; a VT or an attached console answers its rows and
-# columns), so no notice is drawn on it; and a notice that does not reach
-# the console within NOTICE_TIMEOUT is given up, with the ones after it.
-# Each case is said once, in the log, so an operator can tell.
+# blocked for good, after 30turnkey-init-fence. So no notice is drawn on a
+# console nobody can answer (lib/console.sh: one with no size, or one that
+# does not take a write), and a notice that does not reach the console
+# within NOTICE_TIMEOUT is given up, with the ones after it. Either way the
+# hooks are told (unattended), and print into the log from then on. Each
+# case is said once, in the log, so an operator can tell.
 notice() {
     [[ -z "$NOTICES_OFF" ]] || return 0
     if [[ ! -t 1 ]] || [[ "$REDIRECT_OUTPUT" == "true" ]]; then
         notices_off "the output is not a terminal"
         return 0
     fi
-    # the console on fd 3 while the substitution runs: inside it fd 1 is
-    # the pipe that captures the answer, not the console
-    local size
-    { size=$(stty size <&3 2>/dev/null || true); } 3<&1
-    if [[ -z "$size" ]] || [[ "$size" == "0 0" ]]; then
-        notices_off "the console has no size, nobody is attached to it"
+    if console_unattended; then
+        unattended
         return 0
     fi
     timeout --foreground "$NOTICE_TIMEOUT" dialog --backtitle "$FIRSTBOOT_TITLE" \
         --infobox "$1" 5 60 2>/dev/null
     if [[ $? -eq 124 ]]; then
-        notices_off "the console did not take a notice in ${NOTICE_TIMEOUT} s, nobody is reading it"
+        INITHOOKS_UNATTENDED="the console did not take a notice in ${NOTICE_TIMEOUT} s, nobody is reading it"
+        unattended
     fi
     return 0
+}
+
+# unattended: nobody can answer the console, for INITHOOKS_UNATTENDED's
+# reason. No more notices, the hooks are told, and what they print goes to
+# the log: a console nobody reads blocks its writer once its buffer is
+# full (95secupdates prints the whole upgrade).
+unattended() {
+    export INITHOOKS_UNATTENDED
+    notices_off "$INITHOOKS_UNATTENDED"
+    HOOK_OUTPUT=$INITHOOKS_LOGFILE
+    log info "the first boot questions are not asked, and the hooks print into $INITHOOKS_LOGFILE"
 }
 
 # notices_off REASON: no more notices this run, said once
@@ -178,7 +193,11 @@ exec_scripts() {
             notice "Configuring ${BASH_REMATCH[1]}... please wait"
         fi
         # the hook does not get the lock's descriptor: see lib/init-lock.sh
-        "$script_executable" {INIT_LOCK_FD}>&-
+        if [[ -n "$HOOK_OUTPUT" ]]; then
+            "$script_executable" {INIT_LOCK_FD}>&- >> "$HOOK_OUTPUT"
+        else
+            "$script_executable" {INIT_LOCK_FD}>&-
+        fi
         exit_code=$?
         if [[ "$exit_code" -eq 0 ]]; then
             log info "[$script] successfully completed"

@@ -1,3 +1,38 @@
+inithooks (2.3.6+keel22) trixie; urgency=medium
+
+  * A first boot nobody can answer asks nothing. The Web 19.0-3 booted
+    headless in an LXC container (2026-10-03) stopped for good at 31fqdn,
+    whose screen waited on a tty1 nobody was attached to. lib/console.sh
+    is now the one rule, for run's notices and for every hook that draws
+    a screen: nobody can answer a console with no size (stty 0 0), one
+    that does not take a probe larger than a pty's buffer within 2 s, or
+    no terminal at all. run asks once and hands the answer to the hooks
+    (INITHOOKS_UNATTENDED), whose output then goes to the inithooks log.
+    Each hook does what it does without an answer and says so in one
+    line: 30rootpass keeps the password, 31fqdn keeps the name and
+    records it as instance.hostname and instance.fqdn when it has a
+    domain, 75keel-role and 80keel-cloud run confconsole's screens
+    without a terminal (the node stays standalone, a preseeded key is
+    still stored), 85secalerts sets no email, 95secupdates installs and
+    99reboot reboots as SEC_UPDATES=FORCE does. The README's preseed
+    example lists FQDN and says so.
+  * The /etc/hosts entry for the machine's name is written on every first
+    boot. The image ships none (common's seal-hostname), and 31fqdn wrote
+    it only for an answer, so after FQDN=SKIP or an empty answer hostname
+    -f could fail. 31fqdn now always ends with `127.0.1.1 <fqdn>
+    <hostname>`, or `127.0.1.1 <hostname>` without a domain, the form keel
+    spec apply --system writes; a kept name keeps the domain its hosts
+    line already gives it (fqdn.py --machine).
+  * The self-signed certificate is for the machine's name. Given no
+    names, turnkey-make-ssl-cert takes them from `hostname -A`, a reverse
+    lookup of the machine's addresses, and a Web container named web
+    served CN=core. 15regen-sslcert now gives it the fqdn and the
+    hostname (lib/sslcert.sh) and --ip for the addresses, and 31fqdn
+    makes the certificate again when the name it settles is not the CN of
+    a self-signed one; one an authority signed is kept.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Sat, 03 Oct 2026 18:00:00 +0000
+
 inithooks (2.3.6+keel21) trixie; urgency=medium
 
   * A first boot without a journal finishes. 15regen-sslcert ran under

@@ -18,6 +18,7 @@ REPO=$BATS_TEST_DIRNAME/..
 setup() {
     setup_stubs
     stub python3 'echo "HUB_APIKEY=${HUB_APIKEY-unset}" >> "'"$STUBS"'/python3.env"
+if [[ -t 0 ]]; then echo terminal; else echo none; fi >> "'"$STUBS"'/python3.stdin"
 exit "${PYTHON_STATUS:-0}"'
 
     export INITHOOKS_PATH=$BATS_TEST_TMPDIR/inithooks
@@ -32,6 +33,10 @@ exit "${PYTHON_STATUS:-0}"'
 
     export KEEL_FIRSTBOOT=$BATS_TEST_TMPDIR/keelfirstboot.py
     touch "$KEEL_FIRSTBOOT"
+    # somebody can answer the console (lib/console.sh), unless a test
+    # says otherwise
+    export INITHOOKS_UNATTENDED=no
+    export INITHOOKS_LOGFILE=$BATS_TEST_TMPDIR/inithooks.log
     unset HUB_APIKEY
 }
 
@@ -40,6 +45,28 @@ exit "${PYTHON_STATUS:-0}"'
 
     [ "$status" -eq 0 ]
     [ "$(calls python3)" = "$KEEL_FIRSTBOOT role" ]
+}
+
+@test "nobody to answer: the screen is run without a terminal, and it is said" {
+    # keelfirstboot.py still stores a preseeded key then, and draws
+    # nothing (draw_on_terminal: no terminal on its standard input)
+    export INITHOOKS_UNATTENDED="the console has no size"
+    echo "export HUB_APIKEY=key-123" > "$INITHOOKS_CONF"
+
+    run --separate-stderr script -qec "$REPO/firstboot.d/80keel-cloud" /dev/null
+
+    [ "$status" -eq 0 ]
+    [ "$(calls python3)" = "$KEEL_FIRSTBOOT cloud" ]
+    [ "$(cat "$STUBS/python3.stdin")" = none ]
+    [ "$(cat "$STUBS/python3.env")" = "HUB_APIKEY=key-123" ]
+    [ "$(cat "$INITHOOKS_LOGFILE")" = "INFO: [80keel-cloud] not asked, nobody can answer (the console has no size): confconsole's cloud screen is run without a terminal and draws nothing" ]
+}
+
+@test "somebody to answer: the screen gets the terminal" {
+    run script -qec "$REPO/firstboot.d/75keel-role" /dev/null < /dev/null
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$STUBS/python3.stdin")" = terminal ]
 }
 
 @test "80keel-cloud asks for the Keel Cloud key" {
