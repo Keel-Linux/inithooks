@@ -6,7 +6,8 @@ Arguments:
     username      username of account to set password for
 
 Options:
-    -p --pass=    if not provided, will ask interactively
+    -p --pass=    if not provided, will ask interactively; KEEP (any case)
+                  keeps the password as Keep does, without a screen
 
 Asked interactively at first boot, an account that can already log in with
 a password set when the container was created (`pct create --password`, or
@@ -18,6 +19,11 @@ whose root is not locked) and the password last changed on or after it,
 and the shadow field is neither empty nor a placeholder older images
 shipped. The field is compared and never printed or logged. keel-init
 (_TURNKEY_INIT) asks as before.
+
+--pass=KEEP (ROOT_PASS=KEEP in inithooks.conf) is the unattended Keep:
+accepted exactly when the screen would offer Keep, by the same check.
+Otherwise it is an error on stderr and exit 1, as other invalid preseeds
+are; KEEP is never set as the password and nothing is asked.
 """
 
 import datetime
@@ -46,6 +52,8 @@ EPOCH = datetime.date(1970, 1, 1)
 # older WordPress images.
 PLACEHOLDERS = frozenset({"U6aMy0wojraho"})
 EXPLICIT_RUN = "_TURNKEY_INIT"
+# The preseed value that asks for Keep, compared whatever its case
+PRESEED_KEEP = "KEEP"
 # Each fits beside the Generate tag in the widest menu dialog_wrapper draws
 KEEP_CONTAINER = "Password set when the container was created (recommended)"
 KEEP_MACHINE = "Password already set on this machine (recommended)"
@@ -155,6 +163,22 @@ def main():
             usage()
         elif opt in ("-p", "--pass"):
             password = val
+
+    if password.upper() == PRESEED_KEEP:
+        if not keep_offer(username):
+            fatal(
+                f"ROOT_PASS={PRESEED_KEEP}: the {username} password cannot"
+                " be kept; Keep needs one set on this machine on or after"
+                " the image build date (pct create --password), not locked,"
+                " empty or the placeholder, and is not offered under"
+                " keel-init"
+            )
+        print(
+            f"setpass: the {username} password set before the first boot"
+            f" was kept (ROOT_PASS={PRESEED_KEEP})",
+            file=sys.stderr,
+        )
+        return
 
     if not password:
         from libinithooks.dialog_wrapper import Dialog

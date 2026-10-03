@@ -1,3 +1,18 @@
+inithooks (2.3.6+keel24) trixie; urgency=medium
+
+  * ROOT_PASS=KEEP keeps the root (or admin) password set before the first
+    boot, so an unattended first boot after pct create --password no
+    longer needs the password repeated in ROOT_PASS. setpass.py accepts
+    --pass=KEEP, in any case, exactly when the screen would offer Keep,
+    by the same keep_offer() check: the build date is there, the password
+    is usable and was last changed on or after it, it is not the
+    placeholder, and this is not keel-init. Otherwise it writes an error
+    naming ROOT_PASS=KEEP to stderr and exits 1, as an invalid FQDN or
+    SEC_ALERTS preseed does; KEEP is never set as the password and
+    nothing is asked. The README lists the value.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Sat, 03 Oct 2026 20:42:55 +0000
+
 inithooks (2.3.6+keel23) trixie; urgency=medium
 
   * The first boot's security updates never hold it. 95secupdates ran

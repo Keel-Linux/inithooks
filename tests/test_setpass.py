@@ -117,7 +117,8 @@ class SetpassCase(unittest.TestCase):
                     environ=None):
         """Run setpass.py ARGV with the dialogs answering ANSWERS and
         passwd -S printing STATUS; return what chpasswd read ("" when it
-        was not run), the console and the passwd -S stand-in"""
+        was not run), the console and the passwd -S stand-in. The exit
+        status, None when main() returned, is self.status."""
         setpass = load_setpass()
         console = FakeConsole(*answers)
         chpasswd = mock.MagicMock()
@@ -139,7 +140,11 @@ class SetpassCase(unittest.TestCase):
             redirect_stdout(self.printed),
             capture_logs() as self.logged,
         ):
-            setpass.main()
+            self.status = None
+            try:
+                setpass.main()
+            except SystemExit as stopped:
+                self.status = stopped.code
         # whatever happened, the shadow field went nowhere
         for said in (self.printed.getvalue(), *self.logged, console.shown()):
             self.assertNotIn(HASH, said)
@@ -334,6 +339,75 @@ class TestKeepThePasswordOfTheContainer(SetpassCase):
                                               argv=("admin",))
         self.assertEqual(self.menu_tags(console)[0], "Keep")
         self.assertEqual(passwd.call_args.args[0], ["passwd", "-S", "admin"])
+
+
+class TestPreseededKeep(SetpassCase):
+    """ROOT_PASS=KEEP: keep the password the hypervisor set, without a
+    screen, under exactly the conditions the screen offers Keep. Anything
+    else is an error, never a password "KEEP" and never a screen."""
+
+    def run_keep(self, value="KEEP", status=USABLE, environ=None):
+        return self.run_setpass(status=status, environ=environ,
+                                argv=("root", f"--pass={value}"))
+
+    def assert_kept(self, value="KEEP"):
+        given, console, _ = self.run_keep(value)
+        self.assertIsNone(self.status)
+        self.assertEqual(given, "")
+        self.assertEqual(console.calls, [])
+        self.assertIn("kept", self.printed.getvalue())
+
+    def assert_refused(self, status=USABLE, environ=None):
+        given, console, _ = self.run_keep(status=status, environ=environ)
+        self.assertEqual(self.status, 1)
+        self.assertEqual(given, "")
+        self.assertEqual(console.calls, [])
+        said = self.printed.getvalue()
+        self.assertIn("Error:", said)
+        self.assertIn("ROOT_PASS=KEEP", said)
+
+    def test_keep_leaves_a_password_set_after_the_build_alone(self):
+        self.assert_kept()
+
+    def test_keep_on_the_build_day_is_accepted(self):
+        self.write_shadow(changed=BUILD_DAY)
+        self.assert_kept()
+
+    def test_keep_is_read_whatever_its_case(self):
+        # "keep" must not become the password either
+        for value in ("keep", "Keep"):
+            with self.subTest(value=value):
+                self.assert_kept(value)
+
+    def test_keep_outside_a_container_is_accepted(self):
+        self.in_container(False)
+        self.assert_kept()
+
+    def test_keep_of_a_locked_password_fails(self):
+        self.assert_refused(status=LOCKED)
+
+    def test_keep_of_an_empty_password_fails(self):
+        self.assert_refused(status=EMPTY)
+
+    def test_keep_of_a_password_older_than_the_image_fails(self):
+        self.write_shadow(changed=BUILD_DAY - 1)
+        self.assert_refused()
+
+    def test_keep_on_an_image_without_a_build_date_fails(self):
+        os.remove(self.build_date)
+        self.assert_refused()
+
+    def test_keep_of_the_placeholder_fails(self):
+        self.write_shadow(field=PLACEHOLDER)
+        self.assert_refused()
+
+    def test_keep_under_keel_init_fails(self):
+        # keel-init offers no Keep, so no KEEP either
+        self.assert_refused(environ={"_TURNKEY_INIT": "y"})
+
+    def test_a_password_containing_keep_is_set(self):
+        given, _, _ = self.run_keep("KEEPme-123")
+        self.assertEqual(given, "root:KEEPme-123")
 
 
 if __name__ == "__main__":
