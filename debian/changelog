@@ -1,3 +1,19 @@
+inithooks (2.3.6+keel20) trixie; urgency=medium
+
+  * postinst no longer restarts the console's getty on an upgrade. When
+    inithooks.service was not running it restarted getty@tty1.service and
+    container-getty@1.service "to make sure" a login prompt was there,
+    and the restart ended the session on that tty: the maintainer ran
+    apt upgrade from the container console (pct console, tty1) and was
+    logged out mid-upgrade (2026-10-03). A getty is now only ever
+    started, only when it is inactive, only one the machine has (a
+    container has no getty@tty1), and only once the first boot is over,
+    inithooks.service neither running nor queued, asked the way
+    libinithooks/init_lock.py asks. The branch for an inithooks that was
+    running before the upgrade is unchanged.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Sat, 03 Oct 2026 09:00:00 +0000
+
 inithooks (2.3.6+keel19) trixie; urgency=medium
 
   * The first boot asks the machine's fully qualified domain name, in a

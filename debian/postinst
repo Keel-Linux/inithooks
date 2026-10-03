@@ -21,9 +21,32 @@ if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] \
                 systemctl restart turnkey-init-fence.service
             fi
         else
-            # getty1 should already be running if inithooks wasn't, but let's
-            # make sure
-            systemctl restart getty@tty1.service container-getty@1.service 2>/dev/null || true
+            # A login prompt should be on the console already. Make sure
+            # there is one without touching the one there is: a restart of
+            # the getty ends the session on it, and an operator running apt
+            # upgrade from the console (tty1, pct console) was logged out
+            # mid-upgrade (2026-10-03). So a getty is only ever started,
+            # only when it is inactive, only one the machine has (a
+            # container has no getty@tty1), and only once the first boot is
+            # over: inithooks.service neither running nor queued, as
+            # libinithooks/init_lock.py asks (is-active, then a start job
+            # in list-jobs), since the wizard draws on that tty.
+            state=$(systemctl is-active inithooks.service 2>/dev/null || true)
+            case "$state" in
+                active|activating|reloading|deactivating) state=running ;;
+                *) if [ -n "$(systemctl list-jobs --no-legend inithooks.service 2>/dev/null)" ]; then
+                       state=queued
+                   else
+                       state=stopped
+                   fi ;;
+            esac
+            if [ "$state" = stopped ]; then
+                for unit in getty@tty1.service container-getty@1.service; do
+                    systemctl cat "$unit" >/dev/null 2>&1 || continue
+                    systemctl is-active --quiet "$unit" \
+                        || systemctl start "$unit" 2>/dev/null || true
+                done
+            fi
         fi
     else
         # fresh install ($2 is empty) - enable services
