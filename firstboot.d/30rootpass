@@ -2,7 +2,8 @@
 # set root password
 #
 # ROOT_PASS preseeded (or rendered from secrets.root_password by
-# 00declarative) sets it without a screen. Otherwise setpass.py asks, and
+# 00declarative) sets it without a screen; ROOT_PASS=KEEP keeps the one
+# set before the first boot, or fails when Keep would not be offered. Otherwise setpass.py asks, and
 # offers to keep a password set before the first boot (pct create
 # --password, or LXC in the root file system) when there is one. When
 # nobody can answer the console (lib/console.sh), the password stays as

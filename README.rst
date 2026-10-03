@@ -389,6 +389,16 @@ becomes the hostname, the /etc/hosts entry and the name of the self-signed
 certificate, and is recorded in the instance description. FQDN=SKIP keeps
 the name the machine has.
 
+ROOT_PASS=KEEP keeps the root (or admin) password set before the first
+boot, by pct create --password or LXC in the root file system, so an
+unattended first boot need not repeat it. It is accepted exactly when the
+first boot screen would offer Keep: the image carries its build date
+(/etc/keel/build-date), the password is usable and was last changed on or
+after it, and it is not the placeholder older images shipped. Otherwise
+30rootpass fails with an error in /var/log/inithooks.log, as an invalid
+preseed does, and the password is left as it was; KEEP (in any case) is
+never set as the password.
+
 This preseeding mechanism makes it relatively easy to integrate TurnKey
 with custom control panels, virtualization solutions, etc.
 
@@ -609,7 +619,7 @@ Common to all appliances::
                             IP6_SLAAC               [ yes | no ]
     15regen-sslcert         DH_BITS                 [ 1024 | 2048 | 4096 ]
     29preseed               INITFENCE               [ SKIP ]
-    30rootpass*             ROOT_PASS
+    30rootpass*             ROOT_PASS               [ KEEP | the password ]
     31fqdn                  FQDN                    [ SKIP | the name ]
     75keel-role             database.server.role of the instance description
     80keel-cloud            HUB_APIKEY              [ SKIP | the key ]
