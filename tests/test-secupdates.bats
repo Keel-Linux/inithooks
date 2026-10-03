@@ -281,3 +281,38 @@ esac'
     [ "$(cat "$SEC_UPDATES_RECORD")" = "force" ]
     [[ "$(calls apt-get)" == *dist-upgrade* ]]
 }
+
+# journald down: logger exits 1 under bash -e (15regen-sslcert died of it
+# on the published core booted headless, 2026-10-03)
+@test "a preseeded SKIP is recorded when logger fails" {
+    stub logger 'echo "logger: socket /dev/log: Connection refused" >&2; exit 1'
+    echo "export SEC_UPDATES=SKIP" > "$INITHOOKS_CONF"
+
+    run --separate-stderr "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SEC_UPDATES_RECORD")" = "skip" ]
+    [[ "$stderr" != *"Connection refused"* ]]
+}
+
+@test "a preseeded FORCE installs the updates when logger fails" {
+    stub logger 'exit 1'
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$SEC_UPDATES_RECORD")" = "force" ]
+    [[ "$(calls apt-get)" == *dist-upgrade* ]]
+}
+
+@test "a record that cannot be written is still said when logger fails" {
+    stub logger 'exit 1'
+    export SEC_UPDATES_RECORD=$BATS_TEST_TMPDIR/file/sec-updates
+    touch "$BATS_TEST_TMPDIR/file"
+    echo "export SEC_UPDATES=SKIP" > "$INITHOOKS_CONF"
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+}

@@ -305,10 +305,36 @@ if (( n <= 2 )); then echo starting; else echo running; fi"
 
 # run_on_terminal
 # The runner with a terminal for its standard output, the way
-# inithooks.service gives it tty1.
+# inithooks.service gives it tty1: a sized one, as a VT or an attached
+# console is. script gives the pty no size when its own input is none.
 run_on_terminal() {
+    INITHOOKS_DEFAULT=$DEFAULT run script -qec \
+        "stty rows 24 cols 80; $BATS_TEST_DIRNAME/../run" /dev/null < /dev/null
+}
+
+# run_on_unattended_terminal
+# The runner on a terminal nobody is attached to: a pty with no size, as
+# tty1 of an LXC container is until pct console or lxc-console attaches.
+run_on_unattended_terminal() {
     INITHOOKS_DEFAULT=$DEFAULT run script -qec "$BATS_TEST_DIRNAME/../run" \
         /dev/null < /dev/null
+}
+
+# run_on_unread_terminal
+# The runner on a sized terminal whose master nobody reads: what is written
+# fills the pty's buffer and the next write blocks, which is what held the
+# published core's first boot for good on 2026-10-03. The notices have one
+# second to reach it.
+run_on_unread_terminal() {
+    INITHOOKS_DEFAULT=$DEFAULT NOTICE_TIMEOUT=1 \
+        run timeout 60 python3 - "$BATS_TEST_DIRNAME/../run" <<'PY'
+import fcntl, os, pty, struct, subprocess, sys, termios
+master, slave = pty.openpty()
+fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+proc = subprocess.run([sys.argv[1]], stdin=subprocess.DEVNULL, stdout=slave,
+                      stderr=sys.stderr)
+sys.exit(proc.returncode)
+PY
 }
 
 @test "each first boot hook is named on the terminal while it runs" {
@@ -348,6 +374,41 @@ run_on_terminal() {
 
     [ "$status" -eq 0 ]
     [ -z "$(calls dialog)" ]
+    grep -q "first boot notices not drawn: the output is not a terminal" \
+        "$ROOT/inithooks.log"
+}
+
+@test "nothing is drawn on a console nobody is attached to, and the log says so" {
+    stub dialog
+    probe 15first
+    probe 30second
+
+    run_on_unattended_terminal
+
+    [ "$status" -eq 0 ]
+    [ "$(wc -l < "$SEEN")" -eq 2 ]
+    [ -z "$(calls dialog)" ]
+    [ "$(grep -c "first boot notices not drawn" "$ROOT/inithooks.log")" -eq 1 ]
+    grep -q "notices not drawn: the console has no size" "$ROOT/inithooks.log"
+    grep -q "notices not drawn: the console has no size" "$STUBS/logger.calls"
+}
+
+@test "a console that does not take a notice does not hold the boot" {
+    # dialog here writes more than the pty holds, so its write blocks the
+    # way the real one did; the runner gives it NOTICE_TIMEOUT and goes on
+    # without notices
+    stub dialog 'printf "%0131072d" 0'
+    probe 15first
+    probe 30second
+    probe 31third
+
+    run_on_unread_terminal
+
+    [ "$status" -eq 0 ]
+    [ "$(wc -l < "$SEEN")" -eq 3 ]
+    [ "$(calls dialog | wc -l)" -eq 1 ]
+    grep -q "notices not drawn: the console did not take a notice in 1 s" \
+        "$ROOT/inithooks.log"
 }
 
 @test "a run whose output goes to the log draws nothing either" {

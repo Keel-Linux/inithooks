@@ -4,6 +4,26 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/first-boot-without-journal-or-console: shell 99.64 (2026-10-03)
+
+Two first boot stalls of the published core booted headless.
+`firstboot.d/15regen-sslcert` is measured for the first time, 27/27, from
+`tests/test-regen-sslcert.bats` (8 tests): the certificate made and the
+trust store updated, a logger that fails (journald down) not stopping the
+hook, the services that run restarted, a key still being written waited
+for, one that never matches, no turnkey-make-ssl-cert (fatal, said with
+logger failing too), keel-init, the conf file. `tests/test-secupdates.bats`
+gains three tests with logger failing (SKIP recorded, FORCE installed, the
+record that cannot be written); `firstboot.d/95secupdates` 71/72 as
+before. `tests/test-run.bats` gains three: the terminal tests run on a
+sized pty (`stty rows 24 cols 80` under `script`, as a VT or an attached
+console is), a pty nobody is attached to (no size) gets no notice and the
+log says so once, and a sized pty nobody reads (python `pty.openpty`, the
+master never read, dialog a stub writing more than the pty holds) does not
+hold the boot: the notice is given up after NOTICE_TIMEOUT and the hooks
+run on. `run` itself sits outside the directories kcov measures, as
+before. 322 bats in all, total 99.64.
+
 ## Branch feat/first-boot-fqdn: shell 99.62, Python 99 (2026-10-02)
 
 The first boot asks the fully qualified domain name (31fqdn). Shell:
