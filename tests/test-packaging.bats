@@ -158,6 +158,108 @@ prepare_postinst() {
     [ -e "$CRON_HOURLY/other-job" ]
 }
 
+# getty_answers: systemctl answers from the environment, for the upgrade
+# branch of postinst: INITHOOKS_STATE is what is-active says of
+# inithooks.service, INITHOOKS_JOB a queued job, GETTY_UNITS the getty units
+# the machine has (systemctl cat), GETTY_ACTIVE the ones running.
+getty_answers() {
+    stub systemctl 'case "$1" in
+    is-active)
+        unit=${2#--quiet}; unit=${unit:-$3}
+        case "$unit" in
+            inithooks.service) echo "${INITHOOKS_STATE:-inactive}"
+                [ "${INITHOOKS_STATE:-inactive}" = active ] ;;
+            *) [[ " ${GETTY_ACTIVE-} " == *" $unit "* ]] ;;
+        esac ;;
+    list-jobs) printf "%s" "${INITHOOKS_JOB-}" ;;
+    cat) [[ " ${GETTY_UNITS-} " == *" $2 "* ]] ;;
+    *) exit 0 ;;
+esac'
+}
+
+upgrade_postinst() {
+    run sh "$BATS_TEST_TMPDIR/postinst" configure 2.3.6+keel18
+    [ "$status" -eq 0 ]
+}
+
+# 2026-10-03: the maintainer ran apt upgrade from the container console and
+# was logged out mid-upgrade; postinst restarted the getty of the console
+# the upgrade was running on, "to make sure" it was running.
+@test "an upgrade never restarts a getty" {
+    prepare_postinst
+    getty_answers
+    export GETTY_UNITS="getty@tty1.service container-getty@1.service"
+    export GETTY_ACTIVE="getty@tty1.service container-getty@1.service"
+    upgrade_postinst
+    run ! grep -qE "^(start|restart)" "$STUBS/systemctl.calls"
+}
+
+@test "the packaged postinst has no getty restart left in it" {
+    packaged_scripts
+    run ! grep -E 'restart.*getty' "$DEBIAN/postinst"
+}
+
+@test "an upgrade starts a getty that is inactive, among the units the machine has" {
+    prepare_postinst
+    getty_answers
+    # a container: container-getty@1 only, not running
+    export GETTY_UNITS="container-getty@1.service"
+    upgrade_postinst
+    [ "$(grep -E '^start' "$STUBS/systemctl.calls")" = "start container-getty@1.service" ]
+}
+
+@test "an upgrade starts each getty the machine has and does not run" {
+    prepare_postinst
+    getty_answers
+    export GETTY_UNITS="getty@tty1.service container-getty@1.service"
+    export GETTY_ACTIVE="container-getty@1.service"
+    upgrade_postinst
+    [ "$(grep -E '^start' "$STUBS/systemctl.calls")" = "start getty@tty1.service" ]
+}
+
+@test "an upgrade touches no getty while the first boot runs" {
+    prepare_postinst
+    getty_answers
+    export GETTY_UNITS="getty@tty1.service"
+    export INITHOOKS_STATE=activating
+    upgrade_postinst
+    run ! grep -qE "^(start|restart)" "$STUBS/systemctl.calls"
+}
+
+@test "an upgrade touches no getty while the first boot is queued" {
+    prepare_postinst
+    getty_answers
+    export GETTY_UNITS="getty@tty1.service"
+    export INITHOOKS_JOB="12 inithooks.service start waiting"
+    upgrade_postinst
+    run ! grep -qE "^(start|restart)" "$STUBS/systemctl.calls"
+}
+
+@test "an upgrade with inithooks running before it restarts inithooks, as before" {
+    prepare_postinst
+    getty_answers
+    export GETTY_UNITS="getty@tty1.service"
+    # the marker preinst leaves: the copy run here reads the real /run, so
+    # the path is pointed at a scratch one, the way the cron path is
+    sed -i "s|/run/inithooks-was-active|$BATS_TEST_TMPDIR/inithooks-was-active|g" \
+        "$BATS_TEST_TMPDIR/postinst"
+    touch "$BATS_TEST_TMPDIR/inithooks-was-active"
+    upgrade_postinst
+    grep -qx "restart inithooks.service" "$STUBS/systemctl.calls"
+    [ ! -e "$BATS_TEST_TMPDIR/inithooks-was-active" ]
+    run ! grep -q getty "$STUBS/systemctl.calls"
+}
+
+@test "a fresh install touches no getty" {
+    prepare_postinst
+    getty_answers
+    export GETTY_UNITS="getty@tty1.service"
+    run sh "$BATS_TEST_TMPDIR/postinst" configure
+    [ "$status" -eq 0 ]
+    run ! grep -q getty "$STUBS/systemctl.calls"
+    grep -qx "enable inithooks.service" "$STUBS/systemctl.calls"
+}
+
 @test "a system that never had the job installs cleanly" {
     prepare_postinst
     run sh "$BATS_TEST_TMPDIR/postinst" configure
