@@ -1,3 +1,11 @@
+inithooks (2.3.6+keel25) trixie; urgency=medium
+
+  * Maintainer and Uploaders are the Keel Linux maintainers; the TurnKey
+    Linux team asked not to be listed as maintainers of this fork. Their
+    copyright and attribution are unchanged.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Wed, 07 Oct 2026 14:14:24 +0000
+
 inithooks (2.3.6+keel24) trixie; urgency=medium
 
   * ROOT_PASS=KEEP keeps the root (or admin) password set before the first
