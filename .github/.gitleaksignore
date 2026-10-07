@@ -1,0 +1,3 @@
+# gitleaks false positives, by fingerprint. Each was read; none is a secret.
+# COVERAGE.md: a list of hook names and line counts ("10regen-sshkeys 18").
+c23903c1b2934ae68e85138f27266b886f69d5d3:COVERAGE.md:generic-api-key:100

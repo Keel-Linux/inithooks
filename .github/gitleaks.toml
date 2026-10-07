@@ -1,0 +1,13 @@
+# gitleaks (keel-linux/.github, security-scan.yml): the default rules, less
+# the test fixtures below, fake or throwaway on purpose: the self-signed
+# certificate and key of the simplehttpd test (2015, expired 2025) and a
+# placeholder Hub API key. A new fixture is added here by path once read.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "test fixtures"
+paths = [
+  '''^tests/cert\.(key|pem)$''',
+  '''^tests/test_declarative_validate\.py$''',
+]

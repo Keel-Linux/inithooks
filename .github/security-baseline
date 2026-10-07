@@ -1,0 +1,47 @@
+# Security scan baseline (keel-linux/.github, security-scan.yml): findings
+# that were read and are not a risk, one per line, the fingerprint and why.
+semgrep:bash.lang.best-practice.useless-cat.useless-cat:firstboot.d/05autogrow-fs:14053fff5682 style only: useless cat in a pipeline
+shellcheck:SC1007:lib/sslcert.sh:c61ab25f8779 shell lint, not a security risk: 'x= y' style empty assignment in a local declaration, intended
+shellcheck:SC1090:firstboot.d/01ipconfig:79f68d50fb0a shell lint, not a security risk: a sourced file whose path is computed, shellcheck cannot follow it
+shellcheck:SC1090:firstboot.d/05autogrow-fs:c57db62f520d shell lint, not a security risk: a sourced file whose path is computed, shellcheck cannot follow it
+shellcheck:SC1090:firstboot.d/15regen-sslcert:67073f5fe58f shell lint, not a security risk: a sourced file whose path is computed, shellcheck cannot follow it
+shellcheck:SC1090:firstboot.d/98finalize:125a7d718d34 shell lint, not a security risk: a sourced file whose path is computed, shellcheck cannot follow it
+shellcheck:SC2034:firstboot.d/05autogrow-fs:b87a38ea7d94 shell lint, not a security risk: a variable read by a sourcing script or left unused
+shellcheck:SC2046:firstboot.d/05autogrow-fs:3558d61038e1 shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:firstboot.d/05autogrow-fs:4b1300a86bce shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:firstboot.d/05autogrow-fs:a1b267695a61 shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:firstboot.d/05autogrow-fs:e3389dab4c4a shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:turnkey-sudoadmin:0ac31ce81cb1 shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:turnkey-sudoadmin:11a6c943a2e9 shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:turnkey-sudoadmin:134b2535c2cd shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:turnkey-sudoadmin:228ca9823dc9 shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:turnkey-sudoadmin:237e78606e07 shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:turnkey-sudoadmin:274cbecd3053 shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:turnkey-sudoadmin:2a4ced72c38e shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:turnkey-sudoadmin:7478e9bb4efa shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:turnkey-sudoadmin:8c7f3fc87e8e shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:turnkey-sudoadmin:960ada539664 shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:turnkey-sudoadmin:cdd7f6fd3827 shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2046:turnkey-sudoadmin:d238d3ffdcaa shell lint, not a security risk: unquoted command substitution over values the script itself produces
+shellcheck:SC2060:firstboot.d/29sudoadmin:697d8535d183 shell lint, not a security risk: unquoted tr ranges, a glob match is only possible with odd files in the cwd
+shellcheck:SC2060:firstboot.d/29sudoadmin:7b1c7d45758e shell lint, not a security risk: unquoted tr ranges, a glob match is only possible with odd files in the cwd
+shellcheck:SC2068:bin/secalerts.sh:a17fb654f9d7 shell lint, not a security risk: unquoted array expansion of the script's own arguments
+shellcheck:SC2068:turnkey-sudoadmin:a17fb654f9d7 shell lint, not a security risk: unquoted array expansion of the script's own arguments
+shellcheck:SC2120:turnkey-sudoadmin:68092a7b2c12 shell lint, not a security risk: a function's optional arguments are never passed
+shellcheck:SC2120:turnkey-sudoadmin:b1478cd46b50 shell lint, not a security risk: a function's optional arguments are never passed
+shellcheck:SC2128:bin/secalerts.sh:a17fb654f9d7 shell lint, not a security risk: array expanded without index, a correctness defect
+shellcheck:SC2128:turnkey-sudoadmin:a17fb654f9d7 shell lint, not a security risk: array expanded without index, a correctness defect
+shellcheck:SC2145:bin/secalerts.sh:1d07bfd47757 shell lint, not a security risk: "$@" mixed into a message string, affects only log text
+shellcheck:SC2145:bin/secalerts.sh:9b128dae6d11 shell lint, not a security risk: "$@" mixed into a message string, affects only log text
+shellcheck:SC2145:turnkey-sudoadmin:3142703367d7 shell lint, not a security risk: "$@" mixed into a message string, affects only log text
+shellcheck:SC2145:turnkey-sudoadmin:336b288b93fd shell lint, not a security risk: "$@" mixed into a message string, affects only log text
+shellcheck:SC2145:turnkey-sudoadmin:dbc89fa7722c shell lint, not a security risk: "$@" mixed into a message string, affects only log text
+shellcheck:SC2148:lib/console.sh:d9076a317e3e shell lint, not a security risk: a file meant to be sourced, with no shebang
+shellcheck:SC2148:lib/hostname.sh:78da85b80d36 shell lint, not a security risk: a file meant to be sourced, with no shebang
+shellcheck:SC2148:lib/init-fence.sh:cf746eead499 shell lint, not a security risk: a file meant to be sourced, with no shebang
+shellcheck:SC2148:lib/init-lock.sh:5e22b2fb5d28 shell lint, not a security risk: a file meant to be sourced, with no shebang
+shellcheck:SC2148:lib/ipconfig.sh:ba471210f14d shell lint, not a security risk: a file meant to be sourced, with no shebang
+shellcheck:SC2148:lib/keel-firstboot.sh:49133a3eb068 shell lint, not a security risk: a file meant to be sourced, with no shebang
+shellcheck:SC2148:lib/sslcert.sh:85830df6d566 shell lint, not a security risk: a file meant to be sourced, with no shebang
+shellcheck:SC2148:lib/tagid.sh:fc0b1cc391a6 shell lint, not a security risk: a file meant to be sourced, with no shebang
+shellcheck:SC2206:firstboot.d/05autogrow-fs:2bae7b9cf66c shell lint, not a security risk: unquoted array assignment over a value the script controls
