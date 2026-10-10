@@ -126,6 +126,83 @@ packaged_scripts() {
     done
 }
 
+# The step 12 PostgreSQL image of 2026-10-09: 35pgsqlpass and 36pgsqlverify
+# failed at first boot, because postgresql@17-main.service had started
+# before keel-host-keys made the snakeoil pair and stopped with
+# 'could not load server certificate file
+# "/etc/ssl/certs/ssl-cert-snakeoil.pem"'. Before=postgresql.service orders
+# nothing for a cluster: postgresql.service is the meta unit, and each
+# postgresql@VERSION-CLUSTER.service is itself Before=postgresql.service.
+# The drop-in for the template orders every cluster after keel-host-keys.
+
+PG_DROPIN_SRC=$REPO/systemd/postgresql@.service.d/keel-host-keys.conf
+
+# pg_units_root: a scratch unit directory with trixie's PostgreSQL units
+# (tests/fixtures, postgresql-common 278), keel-host-keys.service with a
+# program that exists here, the drop-in where debian/inithooks.install puts
+# it (when WITH_DROPIN=1), and a probe unit that asks for the opposite
+# order: keel-host-keys after the cluster. systemd-analyze verify reports an
+# ordering cycle exactly when the cluster is after keel-host-keys, so the
+# verdict on the order is systemd's own.
+pg_units_root() {
+    UNITS=$BATS_TEST_TMPDIR/units
+    mkdir -p "$UNITS"
+    cp "$BATS_TEST_DIRNAME/fixtures/postgresql@.service" \
+        "$BATS_TEST_DIRNAME/fixtures/postgresql.service" "$UNITS/"
+    sed 's|^ExecStart=.*|ExecStart=/bin/true|' \
+        "$REPO/debian/inithooks.keel-host-keys.service" > "$UNITS/keel-host-keys.service"
+    if [[ "${WITH_DROPIN:-1}" = 1 ]]; then
+        mkdir -p "$UNITS/postgresql@.service.d"
+        cp "$PG_DROPIN_SRC" "$UNITS/postgresql@.service.d/"
+    fi
+    cat > "$UNITS/probe.service" <<'UNIT'
+[Unit]
+Wants=postgresql@17-main.service keel-host-keys.service
+After=postgresql@17-main.service
+Before=keel-host-keys.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/true
+UNIT
+}
+
+@test "the package installs the drop-in for every PostgreSQL cluster" {
+    [ -f "$PG_DROPIN_SRC" ]
+    grep -qE '^systemd/postgresql@\.service\.d/keel-host-keys\.conf[[:space:]]+/usr/lib/systemd/system/postgresql@\.service\.d$' \
+        "$REPO/debian/inithooks.install"
+}
+
+@test "the drop-in orders the cluster after keel-host-keys and wants it" {
+    grep -qx 'After=keel-host-keys.service' "$PG_DROPIN_SRC"
+    grep -qx 'Wants=keel-host-keys.service' "$PG_DROPIN_SRC"
+    # no condition: a cluster that is skipped would hide the fault
+    run ! grep -q '^Condition' "$PG_DROPIN_SRC"
+}
+
+@test "systemd starts postgresql@17-main after keel-host-keys with the drop-in" {
+    pg_units_root
+    run env SYSTEMD_UNIT_PATH="$UNITS:" systemd-analyze verify --man=no probe.service
+    echo "$output"
+    [[ "$output" == *"Found ordering cycle"* ]]
+    [[ "$output" == *"postgresql@17-main.service/start"* ]]
+}
+
+@test "without the drop-in systemd does not order the cluster after keel-host-keys" {
+    WITH_DROPIN=0 pg_units_root
+    run env SYSTEMD_UNIT_PATH="$UNITS:" systemd-analyze verify --man=no probe.service
+    echo "$output"
+    [[ "$output" != *"ordering cycle"* ]]
+}
+
+@test "systemd accepts the PostgreSQL template with the drop-in" {
+    pg_units_root
+    run env SYSTEMD_UNIT_PATH="$UNITS:" systemd-analyze verify --man=no postgresql@17-main.service
+    echo "$output"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *keel-host-keys.conf* ]]
+}
+
 # prepare_postinst: the packaged postinst, with every command it calls
 # stubbed, against a scratch hourly cron directory (CRON_HOURLY). The script
 # names /etc/cron.hourly literally; the copy run here has that one path

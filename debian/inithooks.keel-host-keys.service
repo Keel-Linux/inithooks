@@ -17,6 +17,9 @@ Documentation=https://github.com/Keel-Linux/keel-core/issues/8
 # until this unit replaces it.
 Before=ssh.service webmin.service inithooks.service turnkey-init-fence.service
 Before=apache2.service nginx.service lighttpd.service tomcat10.service tomcat11.service
+# postgresql.service is the meta unit and orders no cluster: the drop-in
+# postgresql@.service.d/keel-host-keys.conf, from this package, orders every
+# postgresql@VERSION-CLUSTER.service after this unit.
 Before=postgresql.service postfix.service
 
 [Service]
