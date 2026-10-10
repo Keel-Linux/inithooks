@@ -1,3 +1,21 @@
+inithooks (2.3.6+keel26) trixie; urgency=medium
+
+  * Every PostgreSQL cluster starts after keel-host-keys.service. The step
+    12 PostgreSQL image of 2026-10-09 started postgresql@17-main before
+    keel-host-keys made the snakeoil pair, and the cluster stopped with
+    'could not load server certificate file
+    "/etc/ssl/certs/ssl-cert-snakeoil.pem"'; 35pgsqlpass and 36pgsqlverify
+    then failed. Before=postgresql.service orders no cluster, because
+    postgresql.service is the meta unit and each
+    postgresql@VERSION-CLUSTER.service is Before= it. The package now
+    installs the drop-in
+    /usr/lib/systemd/system/postgresql@.service.d/keel-host-keys.conf
+    (Wants= and After=keel-host-keys.service). No key goes into the image.
+    tests/test-packaging.bats asks systemd-analyze for the order, with the
+    units of postgresql-common 278.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Sat, 10 Oct 2026 12:00:00 +0000
+
 inithooks (2.3.6+keel25) trixie; urgency=medium
 
   * Maintainer and Uploaders are the Keel Linux maintainers; the TurnKey
