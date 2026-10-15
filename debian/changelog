@@ -1,3 +1,18 @@
+inithooks (2.3.6+keel26) trixie; urgency=medium
+
+  * No first boot screen is drawn when nobody can answer the console.
+    run exports INITHOOKS_UNATTENDED (lib/console.sh), and the Dialog of
+    libinithooks/dialog_wrapper.py now raises an error that names the
+    reason, before it draws a widget. A hook that asked anyway, such as
+    35pgsqlpass of common's pgsql overlay with no DB_PASS, waited for
+    ever on a console that nobody reads: the first boot never reached
+    98finalize, RUN_FIRSTBOOT stayed true, and each reboot ran the first
+    boot hooks again, with new SSH host keys and a changed root password
+    state (keel#155, item 6). Now that hook fails, run logs it and goes
+    on, and the first boot ends.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Thu, 15 Oct 2026 22:40:00 +0000
+
 inithooks (2.3.6+keel25) trixie; urgency=medium
 
   * Maintainer and Uploaders are the Keel Linux maintainers; the TurnKey

@@ -645,6 +645,40 @@ class TestWidgets(unittest.TestCase):
         self.assertEqual(d.get_domain("D", "t"), ("https", "example.org"))
 
 
+class TestNobodyCanAnswer(unittest.TestCase):
+    """run exports INITHOOKS_UNATTENDED (lib/console.sh): "no" when somebody
+    can answer the console, the reason otherwise. A screen drawn when nobody
+    can answer waits for ever, the first boot never reaches 98finalize, and
+    each reboot runs the first boot again (keel#155, item 6). So no widget
+    is drawn then: the hook gets an error that names the reason, and run
+    goes on to the next hook."""
+
+    REASON = "the console has no size, nobody is attached to it"
+
+    def test_no_widget_is_drawn_and_the_error_names_the_reason(self):
+        with mock.patch.dict(os.environ, {"INITHOOKS_UNATTENDED": self.REASON}):
+            for call in (
+                lambda d: d.msgbox("T", "m"),
+                lambda d: d.get_password("PostgreSQL Password", "t"),
+                lambda d: d.get_input("Name", "t"),
+                lambda d: d.yesno("T", "t"),
+            ):
+                d = dialog()
+                with self.assertRaises(dw.Error) as caught:
+                    call(d)
+                self.assertIn(self.REASON, str(caught.exception))
+                self.assertEqual(d.console.calls, [])
+
+    def test_somebody_can_answer(self):
+        for env in ({"INITHOOKS_UNATTENDED": "no"}, {}):
+            with mock.patch.dict(os.environ, env, clear=False):
+                if not env:
+                    os.environ.pop("INITHOOKS_UNATTENDED", None)
+                d = dialog(OK)
+                self.assertEqual(d.msgbox("T", "m"), OK)
+                self.assertEqual(d.console.widgets(), ["msgbox"])
+
+
 class TestValidateDomain(unittest.TestCase):
     def test_answers(self):
         cases = {

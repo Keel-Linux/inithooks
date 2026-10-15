@@ -266,6 +266,16 @@ class Dialog:
             f"wrapper(dialog_name={dialog_name!r}, text=<redacted>,"
             f" *{args!r}, **{kws!r})"
         )
+        unattended = os.environ.get("INITHOOKS_UNATTENDED", "no")
+        if unattended != "no":
+            # run found that nobody can answer the console (lib/console.sh).
+            # A widget drawn now waits for ever, and the first boot never
+            # reaches 98finalize (keel#155, item 6). The hook fails instead,
+            # and run goes on to the next hook.
+            raise Error(
+                f"nobody can answer the console ({unattended}):"
+                f" the {dialog_name} screen is not drawn"
+            )
         try:
             method = getattr(self.console, dialog_name)
         except AttributeError as e:
