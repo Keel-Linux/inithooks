@@ -536,6 +536,15 @@ Notes:
 
     - version is required and must be 1. An unknown top level key is an
       error; keys under app.options and preseed are not checked.
+    - The description is validated by the keel command's own validator when
+      the keel package is installed, so the first boot accepts every section
+      and field keel accepts, including the appliance, installation, overlays
+      and monitor sections this reader does not act on. An image that does not
+      carry keel falls back to a copy of that validation held inside
+      inithooks; the copy is deliberately not a dependency, and the two are
+      kept from drifting by tests/test_vocabulary.py. This is why a spec the
+      Core image's tooling accepts boots as it is, without the conf having to
+      be rendered beforehand.
     - security.updates_at_first_boot controls one thing: whether 95secupdates
       installs the pending security updates during the first boot. The
       appliance keeps itself current either way, through cron-apt, so the

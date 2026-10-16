@@ -55,6 +55,11 @@ RENAME_REASONS = {
     " updates; the appliance keeps them current either way",
 }
 
+# The fallback's copy of the top level keys, read only when keel is not
+# installed (validate() below). keel's own table is the live one, so a
+# description carrying a section keel gained is accepted whenever keel is
+# there; an image without keel has nothing that acts on those sections
+# anyway. tests/test_vocabulary.py keeps this copy in step with keel's.
 TOP_LEVEL_KEYS = (
     "version",
     "instance",
@@ -180,12 +185,44 @@ def canonical(doc: Any) -> Any:
     return result
 
 
+def keel_validator() -> Callable[..., list[str]] | None:
+    """keel's own validator, or None when keel is not installed
+
+    keel is the writer of the instance description and the reader that
+    acts on it after the first boot, so its validator is the one that
+    decides what a description may say. Asking it means the first boot
+    accepts every section and field keel accepts, and the two readers
+    cannot drift: a section keel gained that this reader did not know
+    used to make 00declarative exit 1 and leave /etc/inithooks.conf
+    unwritten, so a headless boot only worked if the conf was rendered
+    beforehand. keel is deliberately not a dependency, so an image that
+    does not carry it answers None and validate() falls back to the copy
+    in _validate_local.
+    """
+    try:
+        from keel.spec.validate import validate as keel_validate
+    except ImportError:
+        return None
+    return keel_validate
+
+
 def validate(doc: dict) -> list[str]:
     """Return a list of error messages, empty when the document is valid
 
-    A deprecated field name is read under its current name, so a description
-    written before a rename gets the real errors rather than "unknown key".
+    keel's validator is asked when keel is installed, so the first boot
+    accepts what keel accepts; the copy in _validate_local answers where
+    keel is not installed. Either way a deprecated field name is read
+    under its current name, so a description written before a rename gets
+    the real errors rather than "unknown key".
     """
+    keel_validate = keel_validator()
+    if keel_validate is not None:
+        return list(keel_validate(canonical(doc)))
+    return _validate_local(doc)
+
+
+def _validate_local(doc: dict) -> list[str]:
+    """The copy of keel's validation, used when keel is not installed"""
     doc = canonical(doc)
     errors: list[str] = []
 

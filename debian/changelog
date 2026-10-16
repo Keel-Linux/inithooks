@@ -1,3 +1,22 @@
+inithooks (2.3.6+keel27) trixie; urgency=medium
+
+  * The declarative first boot accepts every spec section keel accepts.
+    keel 0.13.0 added the appliance, installation and overlays sections
+    (0.10 added monitor), and 00declarative validated the description
+    against its own copy of the top level section list, which did not know
+    them: it exited 1 with "unknown top level key", /etc/inithooks.conf was
+    never written, and a headless boot of a Core image only worked when the
+    conf had been rendered beforehand, as keel-core's boot-test.sh does.
+    libinithooks/declarative.py now asks keel's own validator
+    (keel.spec.validate) when the keel package is installed, so the writer
+    of the description and the hook that boots from it cannot drift apart.
+    Where keel is not installed the reader keeps its built-in copy of that
+    validation, because inithooks keeps no dependency on keel; the copy is
+    what an image without keel uses, and tests/test_vocabulary.py holds it
+    to the same vocabulary (inithooks#31).
+
+ -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Thu, 15 Oct 2026 23:30:00 +0000
+
 inithooks (2.3.6+keel26) trixie; urgency=medium
 
   * No first boot screen is drawn when nobody can answer the console.

@@ -36,7 +36,7 @@ def doc(text: str) -> dict:
 def env(text: str) -> dict:
     """Render a YAML document to a dict of exported variables"""
     document = doc(text)
-    errors = declarative.validate(document)
+    errors = declarative._validate_local(document)
     if errors:
         raise AssertionError(f"unexpected errors: {errors}")
     secrets = declarative.resolve_secrets(document)
@@ -51,7 +51,7 @@ def env(text: str) -> dict:
 
 
 def errors(text: str) -> list[str]:
-    return declarative.validate(doc(text))
+    return declarative._validate_local(doc(text))
 
 
 class TestLoad(unittest.TestCase):
@@ -221,7 +221,7 @@ class TestSecrets(unittest.TestCase):
             "  app_password:\n"
             f"    file: {path}\n"
         )
-        self.assertEqual(declarative.validate(document), [])
+        self.assertEqual(declarative._validate_local(document), [])
         secrets = declarative.resolve_secrets(document)
         rendered = declarative.render_env(document, secrets)
 

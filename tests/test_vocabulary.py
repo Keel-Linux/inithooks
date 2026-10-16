@@ -16,8 +16,10 @@ recorded.
 
 import os
 import sys
+import types
 import unittest
 from os.path import abspath, dirname, exists, join
+from unittest import mock
 
 from helpers import declarative, doc
 
@@ -90,7 +92,7 @@ class TestFrozenVocabulary(unittest.TestCase):
                 text = f"version: 1\n{section}:\n{body}\n"
                 unknown = [
                     error
-                    for error in declarative.validate(doc(text))
+                    for error in declarative._validate_local(doc(text))
                     if "unknown key" in error
                 ]
                 self.assertEqual(unknown, [])
@@ -101,16 +103,16 @@ class TestFrozenVocabulary(unittest.TestCase):
                 text = f"version: 1\n{section}:\n  not_a_field: x\n"
                 self.assertIn(
                     f"{section}.not_a_field: unknown key",
-                    declarative.validate(doc(text)),
+                    declarative._validate_local(doc(text)),
                 )
 
     def test_the_full_document_is_valid(self):
-        self.assertEqual(declarative.validate(doc(FULL)), [])
+        self.assertEqual(declarative._validate_local(doc(FULL)), [])
 
 
 class TestRenames(unittest.TestCase):
     def test_a_deprecated_name_is_still_read(self):
-        self.assertEqual(declarative.validate(doc(DEPRECATED)), [])
+        self.assertEqual(declarative._validate_local(doc(DEPRECATED)), [])
 
     def test_a_deprecated_name_is_reported_with_its_replacement(self):
         messages = declarative.deprecations(doc(DEPRECATED))
@@ -164,16 +166,79 @@ class TestBothReadersAgree(unittest.TestCase):
 
     def test_the_full_document_is_valid_to_both(self):
         self.assertEqual(self.validate(doc(FULL)), [])
-        self.assertEqual(declarative.validate(doc(FULL)), [])
+        self.assertEqual(declarative._validate_local(doc(FULL)), [])
 
     def test_the_deprecated_name_is_read_by_both(self):
         self.assertEqual(self.validate(doc(DEPRECATED)), [])
-        self.assertEqual(declarative.validate(doc(DEPRECATED)), [])
+        self.assertEqual(declarative._validate_local(doc(DEPRECATED)), [])
 
     def test_both_carry_the_same_rename_table(self):
         from keel.spec import compat
 
         self.assertEqual(compat.RENAMED, declarative.RENAMED)
+
+
+class TestValidationIsDelegatedToKeel(unittest.TestCase):
+    """validate() asks keel when keel is installed, the copy otherwise
+
+    keel is the writer of the description, so its validator decides what
+    the description may say; the copy in _validate_local is only the
+    fallback for an image without keel. A fake keel stands in here so the
+    delegation is tested without keel installed.
+    """
+
+    def fake_keel(self, errors):
+        calls = []
+
+        def validate(document, **kwargs):
+            calls.append(document)
+            return errors
+
+        modules = {
+            "keel": types.ModuleType("keel"),
+            "keel.spec": types.ModuleType("keel.spec"),
+            "keel.spec.validate": types.ModuleType("keel.spec.validate"),
+        }
+        modules["keel.spec.validate"].validate = validate
+        return modules, calls
+
+    def test_keel_is_asked_and_its_errors_are_returned(self):
+        modules, calls = self.fake_keel(["appliance.name: bad"])
+        with mock.patch.dict(sys.modules, modules):
+            found = declarative.validate(doc("version: 1\n"))
+        self.assertEqual(found, ["appliance.name: bad"])
+        self.assertEqual(len(calls), 1)
+
+    def test_keel_accepts_the_sections_the_copy_does_not_know(self):
+        modules, _ = self.fake_keel([])
+        text = (
+            "version: 1\n"
+            "instance:\n  hostname: blog\n"
+            "appliance:\n  name: core\n"
+            "installation:\n  mode: simple\n"
+            "overlays:\n"
+            "  installer: enabled\n"
+            "  etcd: disabled\n"
+            "security:\n  alerts: admin@example.org\n"
+            "monitor:\n  enabled: true\n  notify:\n    email: true\n"
+        )
+        with mock.patch.dict(sys.modules, modules):
+            self.assertEqual(declarative.validate(doc(text)), [])
+
+    def test_a_deprecated_name_is_canonical_before_keel_sees_it(self):
+        modules, calls = self.fake_keel([])
+        with mock.patch.dict(sys.modules, modules):
+            declarative.validate(doc(DEPRECATED))
+        self.assertIn("updates_at_first_boot", calls[0]["security"])
+        self.assertNotIn("updates", calls[0]["security"])
+
+    def test_the_copy_answers_when_keel_is_absent(self):
+        absent = {"keel": None, "keel.spec": None, "keel.spec.validate": None}
+        with mock.patch.dict(sys.modules, absent):
+            self.assertIsNone(declarative.keel_validator())
+        self.assertEqual(
+            declarative._validate_local(doc("version: 1\n")), []
+        )
 
 
 if __name__ == "__main__":

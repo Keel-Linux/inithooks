@@ -4,6 +4,22 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/accept-keel-spec-sections: Python 99 (2026-10-15)
+
+The first boot accepts every spec section keel accepts (inithooks#31).
+`libinithooks/declarative.py` gains `keel_validator()`, which imports
+`keel.spec.validate` when the keel package is installed and answers None
+otherwise, and `validate()` now asks it (over the canonical document) when
+it is there, falling back to `_validate_local()`, the renamed copy of the
+old validator. `tests/test_vocabulary.py` gains
+`TestValidationIsDelegatedToKeel` (a fake keel proves it is asked, its
+errors are returned, the four new sections pass and a deprecated name is
+canonical before keel sees it; a second test proves the copy answers when
+keel is absent), and the local-behaviour tests now call `_validate_local`
+directly, so a machine that happens to have keel installed does not change
+what they measure. `libinithooks/declarative.py` 100 percent, `bin/declarative.py`
+99 (the long-standing 119->108 branch miss). 547 pytest.
+
 ## Branch fix/secupdates-never-hold-boot: shell 99.71 (2026-10-03)
 
 `firstboot.d/95secupdates` 110/111 (the line not run is still the TurnKey

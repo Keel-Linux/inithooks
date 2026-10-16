@@ -26,7 +26,7 @@ class TestSecretFiles(unittest.TestCase):
         document = doc(
             f"version: 1\nsecrets:\n  db_password:\n    file: {path}\n"
         )
-        self.assertEqual(declarative.validate(document), [])
+        self.assertEqual(declarative._validate_local(document), [])
         os.chmod(path, 0o644)
         with self.assertRaises(declarative.DeclarativeError) as raised:
             declarative.resolve_secrets(document)

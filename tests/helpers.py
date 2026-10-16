@@ -25,7 +25,7 @@ def doc(text: str) -> dict:
 def env(text: str) -> dict:
     """Render a YAML document to a dict of exported variables"""
     document = doc(text)
-    found = declarative.validate(document)
+    found = declarative._validate_local(document)
     if found:
         raise AssertionError(f"unexpected errors: {found}")
     secrets = declarative.resolve_secrets(document)
@@ -40,7 +40,7 @@ def env(text: str) -> dict:
 
 
 def errors(text: str) -> list[str]:
-    return declarative.validate(doc(text))
+    return declarative._validate_local(doc(text))
 
 
 def secret_file(directory: str, content: str, name: str = "secret") -> str:
