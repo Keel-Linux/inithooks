@@ -1,3 +1,27 @@
+inithooks (2.3.6+keel29) trixie; urgency=medium
+
+  * Harden the declarative reader's file handling the way privileged
+    bootstrap tooling is hardened elsewhere (CWE-59, CWE-367). A secret
+    file was checked with stat() and read with open() as two steps on a
+    name: a process that can write the directory could swap the file in
+    between, and the reader, running as root at first boot, would have
+    handed the secret's content to the wrong document. The check now
+    happens on the opened descriptor in the same open that reads it:
+    O_NOFOLLOW refuses a symlink outright (with its own error message,
+    at validate time too), O_NONBLOCK keeps a FIFO parked in the path
+    from stalling the reader, and fstat verifies the regular-file check,
+    the 0600-or-stricter mode and the root ownership of the file
+    actually read. The conf write was truncating the target in place, so
+    a crash or kill mid-write left a half-written conf for the hooks to
+    source, and it followed a symlink swapped in at the conf path. It
+    now writes a private O_EXCL temporary in the same directory, fsyncs,
+    and renames over the target, which replaces a link instead of
+    following it and is atomic on the kernel's side, with each cleanup
+    step unable to mask the next. The description itself is read through
+    a 1 MiB cap.
+
+ -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Fri, 16 Oct 2026 04:25:00 +0000
+
 inithooks (2.3.6+keel28) trixie; urgency=medium
 
   * 00declarative writes a static IPv6 address at first boot, the same one

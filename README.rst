@@ -573,9 +573,19 @@ Notes:
 
     - A secret is a mapping with exactly one of file or generate. A secret
       file is read as bytes, one trailing newline is stripped, and it must
-      be mode 0600 or stricter and owned by root. generate is meant for
+      be mode 0600 or stricter and owned by root. The check is made on the
+      opened file descriptor, in the same open that reads it (O_NOFOLLOW,
+      O_NONBLOCK, fstat): a symlink is refused outright, and a file swapped
+      between a check and a read, or a FIFO parked in the path, cannot
+      stall or redirect the root-run reader. generate is meant for
       db_password: a generated value is never shown, so it is refused for
       root_password and app_password unless first_login_wizard is true.
+
+    - The conf is written atomically: a private temporary file in the same
+      directory, fsync'ed, renamed over the target (a rename replaces a
+      symlink instead of following it), so a crash, kill or swapped path
+      never leaves a half-written or redirected conf for the hooks to
+      source. The description itself is read through a 1 MiB cap.
 
     - Values are shell quoted, so a password containing spaces, quotes or a
       dollar sign survives being sourced.

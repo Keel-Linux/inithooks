@@ -119,6 +119,98 @@ class TestConf(unittest.TestCase):
         with open(conf) as fob:
             self.assertEqual(fob.read(), "export HOSTNAME=blog\n")
 
+    def test_write_conf_replaces_a_symlink_instead_of_following_it(self):
+        """CWE-59: a conf path swapped for a link must not redirect the
+        root-owned write into another file"""
+        directory = tempfile.mkdtemp()
+        decoy = join(directory, "decoy")
+        with open(decoy, "w") as fob:
+            fob.write("precious\n")
+        conf = join(directory, "inithooks.conf")
+        os.symlink(decoy, conf)
+
+        declarative.write_conf("export HOSTNAME=blog\n", conf)
+
+        with open(decoy) as fob:
+            self.assertEqual(fob.read(), "precious\n")
+        self.assertFalse(os.path.islink(conf))
+        with open(conf) as fob:
+            self.assertEqual(fob.read(), "export HOSTNAME=blog\n")
+
+    def test_write_conf_leaves_no_temporary_file_behind(self):
+        directory = tempfile.mkdtemp()
+        conf = join(directory, "inithooks.conf")
+        declarative.write_conf("export HOSTNAME=blog\n", conf)
+        self.assertEqual(os.listdir(directory), ["inithooks.conf"])
+
+    def test_a_failed_write_leaves_no_temporary_file_behind(self):
+        directory = tempfile.mkdtemp()
+        conf = join(directory, "inithooks.conf")
+        with mock.patch.object(
+            declarative.os, "replace", side_effect=OSError
+        ):
+            with self.assertRaises(OSError):
+                declarative.write_conf("export HOSTNAME=blog\n", conf)
+        self.assertEqual(os.listdir(directory), [])
+
+    def test_a_failed_open_of_the_temp_closes_the_descriptor(self):
+        directory = tempfile.mkdtemp()
+        conf = join(directory, "inithooks.conf")
+        real_fdopen = os.fdopen
+
+        def fail_fdopen(fd, mode):
+            os.close(fd)
+            raise OSError("no space left on device")
+
+        with mock.patch.object(declarative.os, "fdopen", fail_fdopen):
+            with self.assertRaises(OSError):
+                declarative.write_conf("export HOSTNAME=blog\n", conf)
+        self.assertEqual(os.listdir(directory), [])
+        self.assertIs(os.fdopen, real_fdopen)
+
+
+class TestSecretFileHardening(unittest.TestCase):
+    """The check that guards a secret read sits on the opened descriptor"""
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+
+    def secret(self, name: str = "secret") -> str:
+        path = join(self.directory, name)
+        with open(path, "w") as fob:
+            fob.write("s3cret\n")
+        os.chmod(path, 0o600)
+        return path
+
+    def test_a_regular_0600_file_reads(self):
+        path = self.secret()
+        self.assertEqual(declarative._read_secret_file(path), "s3cret")
+
+    def test_a_symlink_is_refused_even_to_a_fit_target(self):
+        """O_NOFOLLOW: check and read are a single open, so a link has
+        no window to land between them"""
+        target = self.secret("target")
+        link = join(self.directory, "link")
+        os.symlink(target, link)
+        with self.assertRaises(declarative.DeclarativeError) as ctx:
+            declarative._read_secret_file(link)
+        self.assertIn("must not be a symlink", str(ctx.exception))
+
+    def test_validation_reports_the_symlink_reason_too(self):
+        target = self.secret("target")
+        link = join(self.directory, "link")
+        os.symlink(target, link)
+        self.assertIn(
+            "must not be a symlink", declarative._secret_file_error(link)
+        )
+
+    def test_a_fifo_is_not_a_secret_file(self):
+        path = join(self.directory, "fifo")
+        os.mkfifo(path)
+        with self.assertRaises(declarative.DeclarativeError) as ctx:
+            declarative._read_secret_file(path)
+        self.assertIn("not a regular file", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

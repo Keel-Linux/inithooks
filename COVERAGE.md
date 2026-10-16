@@ -6,6 +6,28 @@ file our changes touch).
 
 ## Branch fix/accept-keel-spec-sections: Python 99 (2026-10-16)
 
+File-handling hardening, the way privileged bootstrap tooling is hardened
+elsewhere (CWE-59, CWE-367). A secret file used to be checked with
+`stat()` and read with `open()` as two steps on a name, a textbook race
+for a root-run reader; `_open_secret_file()` now opens once with
+`O_NOFOLLOW | O_NONBLOCK` and verifies regular-file, mode and owner with
+`fstat` on the opened descriptor, so a symlink swapped in at the last
+component is refused with its own message (at validate time too, through
+`_secret_file_error()`, which is advisory and says so), a FIFO cannot
+stall the reader, and a mode loosened between check and read cannot race
+the check away. `write_conf()` was truncating the target in place: it
+now writes a private `O_EXCL` temporary in the same directory, fsyncs
+and `rename()`s over the target, which replaces a symlink instead of
+following it and is atomic, and each cleanup step is guarded so one
+failing close cannot mask the unlink. `load()` reads the description
+through a 1 MiB cap. The tests pin each guarantee: symlinked conf leaves
+the decoy untouched, no temporary survives a success or a forced failure
+at `fdopen` or `rename`, a symlinked or non-regular secret is refused
+with its reason, and a description over the cap is refused while one at
+the cap loads. The forced-`fdopen`-failure test caught a real bug: a
+close that raised in `finally` masked the temporary's unlink, leaving it
+on disk.
+
 The first boot writes a static IPv6 address, the same one keel writes
 (inithooks#21). `_network_env()` is now a port of
 `keel.spec.render.network_env`: `_ipv6_env()` exports `IP6_CONFIG`
@@ -22,8 +44,8 @@ matrix of 8 documents crossed with 7 nameserver lists, and the CLI test
 writes the #21 conf (static IPv6, slaac off, mixed-family resolvers).
 
 `libinithooks/declarative.py` 100 percent, `bin/declarative.py` 99 (the
-long-standing 119->108 branch miss). 585 pytest with keel beside the
-checkout, 572 plus 13 keel-gated skips without it.
+long-standing 119->108 branch miss). 595 pytest with keel beside the
+checkout, 582 plus 13 keel-gated skips without it.
 
 The hardening pass after the fix added an ordered conf-line parity test
 (the network lines of both readers' full render must be identical in

@@ -10,10 +10,12 @@ file format can be changed without touching anything else here.
 """
 
 import ipaddress
+import errno
 import os
 import re
 import secrets as secrets_module
 import shlex
+import stat as statlib
 import subprocess
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -125,18 +127,31 @@ def resolve_path(
     return found[0], found[1:]
 
 
+MAX_DESCRIPTION_BYTES = 1024 * 1024
+
+
 def load(path: str) -> dict:
     """Parse the declarative file, raise DeclarativeError if it cannot be
 
     A file that is not text at all is a DeclarativeError like any other,
     not a traceback out of the reader: the message says the bytes are not
-    UTF-8. test_spec_properties.py reaches this with random bytes.
+    UTF-8. test_spec_properties.py reaches this with random bytes. The
+    file is read through a size cap first: the description is a few
+    hundred bytes in practice, and a reader that runs as root at first
+    boot must not hold an unbounded buffer for a path it does not control
+    (the cap cloud-init-style user data answers with too).
     """
     try:
-        with open(path) as fob:
-            doc = yaml.safe_load(fob)
+        with open(path, "rb") as fob:
+            data = fob.read(MAX_DESCRIPTION_BYTES + 1)
     except OSError as e:
         raise DeclarativeError(f"{path}: {e}")
+    if len(data) > MAX_DESCRIPTION_BYTES:
+        raise DeclarativeError(
+            f"{path}: larger than {MAX_DESCRIPTION_BYTES} bytes"
+        )
+    try:
+        doc = yaml.safe_load(data.decode())
     except UnicodeDecodeError as e:
         raise DeclarativeError(f"{path}: not valid UTF-8: {e}")
     except yaml.YAMLError as e:
@@ -381,11 +396,41 @@ def mask(text: str) -> str:
 
 
 def write_conf(text: str, path: str) -> None:
-    """Write the rendered conf, readable by root only"""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fob:
-        fob.write(text)
-    os.chmod(path, 0o600)
+    """Write the rendered conf atomically, readable by root only
+
+    The hooks source the conf at first boot, so a crash or a kill mid-way
+    must never leave a half-written file for them to source: the text is
+    written to a private temporary file in the same directory, fsync'ed,
+    and renamed over the target, which the kernel makes atomic. rename
+    also replaces a symlink at the target instead of following it, so a
+    conf path swapped for a link cannot redirect the root-owned write
+    (CWE-367, CWE-59). The temporary is opened with O_EXCL: this writer
+    never follows or clobbers a pre-existing path it did not create.
+    """
+    tmp = f"{path}.tmp.{os.getpid()}"
+    fd = -1
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fob:
+            fd = -1
+            fob.write(text)
+            fob.flush()
+            os.fsync(fob.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    finally:
+        # each cleanup must not be able to mask the next: a close that
+        # fails (the descriptor already gone, say) must not keep the
+        # temporary file on disk
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def default_managed_by() -> str:
@@ -637,25 +682,48 @@ def _ip_version(value: str) -> int | None:
 
 
 def _read_secret_file(path: str) -> str:
-    error = _secret_file_error(path)
-    if error:
-        raise DeclarativeError(error)
-    with open(path, "rb") as fob:
+    fd = _open_secret_file(path)
+    with os.fdopen(fd, "rb") as fob:
         data = fob.read()
     if data.endswith(b"\n"):
         data = data[:-1]
     return data.decode()
 
 
-def _secret_file_error(path: str) -> str | None:
-    if not os.path.isfile(path):
-        return f"{path}: secret file not found"
-    stat = os.stat(path)
-    if stat.st_mode & 0o077:
-        return f"{path}: secret file mode must be 0600 or stricter"
-    if stat.st_uid not in (0, os.geteuid()):
-        return f"{path}: secret file must be owned by root"
-    return None
+def _open_secret_file(path: str) -> int:
+    """Open a secret file descriptor, checked and used in one step
+
+    The check and the read must not be two steps on a name: a local
+    process that can write the directory could swap the file between the
+    stat and the open, and the reader, running as root at first boot,
+    would then hand the secret's content to the wrong document
+    (CWE-367). So the file is opened once, O_NOFOLLOW refuses a symlink
+    swapped in at the last component, O_NONBLOCK keeps a FIFO from
+    stalling the reader until a writer shows up, and the mode and owner
+    are read back from the opened descriptor with fstat, which describes
+    the file actually read, not the file that was there a moment ago.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise DeclarativeError(
+                f"{path}: secret file must not be a symlink"
+            )
+        raise DeclarativeError(f"{path}: secret file not found")
+    st = os.fstat(fd)
+    if not statlib.S_ISREG(st.st_mode):
+        os.close(fd)
+        raise DeclarativeError(f"{path}: secret file is not a regular file")
+    if st.st_mode & 0o077:
+        os.close(fd)
+        raise DeclarativeError(
+            f"{path}: secret file mode must be 0600 or stricter"
+        )
+    if st.st_uid not in (0, os.geteuid()):
+        os.close(fd)
+        raise DeclarativeError(f"{path}: secret file must be owned by root")
+    return fd
 
 
 def _domain_error(key: str, value: Any) -> str | None:
@@ -722,6 +790,22 @@ def _validate_secrets(doc: dict) -> list[str]:
                 " nobody can log in with the generated value"
             )
     return errors
+
+
+def _secret_file_error(path: str) -> str | None:
+    """The validation-time view of a secret file's hygiene
+
+    Advisory only: the check that guards the read happens again on the
+    opened descriptor in _open_secret_file(), since validation and use
+    are separate moments (CWE-367). This exists so the error names the
+    field at validate time rather than failing the whole run later.
+    """
+    try:
+        fd = _open_secret_file(path)
+    except DeclarativeError as e:
+        return str(e)
+    os.close(fd)
+    return None
 
 
 def _validate_secret(key: str, spec: Any) -> list[str]:

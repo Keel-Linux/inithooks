@@ -210,5 +210,30 @@ class TestLoadFuzz(unittest.TestCase):
                 os.remove(path)
 
 
+class TestLoadSizeCap(unittest.TestCase):
+    """A root-run first-boot reader must not buffer a path without a bound"""
+
+    def test_a_description_over_the_cap_is_refused(self):
+        with tempfile.NamedTemporaryFile("wb", delete=False) as fob:
+            fob.write(b"x" * (declarative.MAX_DESCRIPTION_BYTES + 1))
+            path = fob.name
+        try:
+            with self.assertRaises(declarative.DeclarativeError) as ctx:
+                declarative.load(path)
+            self.assertIn("larger than", str(ctx.exception))
+        finally:
+            os.remove(path)
+
+    def test_a_description_at_the_cap_still_loads(self):
+        pad = declarative.MAX_DESCRIPTION_BYTES - len("version: 1\n# \n")
+        with tempfile.NamedTemporaryFile("w", delete=False) as fob:
+            fob.write("version: 1\n# " + "x" * pad + "\n")
+            path = fob.name
+        try:
+            self.assertEqual(declarative.load(path), {"version": 1})
+        finally:
+            os.remove(path)
+
+
 if __name__ == "__main__":
     unittest.main()
