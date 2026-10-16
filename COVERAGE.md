@@ -22,8 +22,18 @@ matrix of 8 documents crossed with 7 nameserver lists, and the CLI test
 writes the #21 conf (static IPv6, slaac off, mixed-family resolvers).
 
 `libinithooks/declarative.py` 100 percent, `bin/declarative.py` 99 (the
-long-standing 119->108 branch miss). 583 pytest with keel beside the
-checkout, 572 plus 11 keel-gated skips without it.
+long-standing 119->108 branch miss). 585 pytest with keel beside the
+checkout, 572 plus 13 keel-gated skips without it.
+
+The hardening pass after the fix added an ordered conf-line parity test
+(the network lines of both readers' full render must be identical in
+order, not only the variable set) and `TestNetworkRenderParity` in
+`tests/test_spec_properties.py`, a seeded generator crossing methods,
+families, several interfaces, gateways and up to four nameservers of
+both families through both readers. Its first run caught a real trap the
+hand-picked matrix missed: IPv6 hextets are hexadecimal, so a decimal
+hextet above 0x9999 is out of range and both readers reject it the same
+way, which is itself the parity property holding, not a bug in the port.
 
 ## Branch fix/accept-keel-spec-sections: Python 99 (2026-10-15)
 

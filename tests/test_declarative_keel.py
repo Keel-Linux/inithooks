@@ -191,6 +191,21 @@ class KeelNetworkParity(unittest.TestCase):
                 theirs = self.keel_network_env(document.get("network"))
                 self.assertEqual(ours, theirs)
 
+    def test_the_conf_network_lines_are_identical_in_order(self):
+        """The conf file itself, not only the variable set: the hook
+        sources the file, and the day-two conf is compared line by line
+        in tests, so the order must match too"""
+        from keel.spec.render import render_env as keel_render_env
+
+        for label, document in self.documents():
+            with self.subTest(document=label):
+                ours = self.declarative.render_env(document, {})
+                theirs = keel_render_env(document, {})
+                our_lines = [line for line in ours.splitlines()
+                             if line.startswith("export IP")]
+                their_lines = [line for line in theirs.splitlines()
+                               if line.startswith("export IP")]
+                self.assertEqual(our_lines, their_lines)
 
 
 if __name__ == "__main__":

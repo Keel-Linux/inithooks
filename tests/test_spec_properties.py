@@ -9,10 +9,11 @@ dependency (the CI runner installs pytest, coverage and PyYAML alone).
 
 import os
 import random
+import sys
 import tempfile
 import unittest
 
-from helpers import declarative, keel_validate
+from helpers import declarative, keel_checkout, keel_validate
 
 SEEDS = range(50)
 UNRENDERED = ("appliance", "installation", "overlays", "monitor", "nonsense")
@@ -115,6 +116,78 @@ class TestKeelProperties(unittest.TestCase):
             plain = self.keel(doc) == []
             renamed = self.keel(declarative.canonical(doc)) == []
             self.assertEqual(plain, renamed)
+
+
+IPV4_METHODS = ("static", "dhcp", "manual", "none")
+IPV6_METHODS = ("static", "auto", "dhcp", "manual", "none")
+
+
+def rand_network(rng: random.Random) -> dict:
+    """A random but valid network section, for the render parity property"""
+    network = {"managed_by": rng.choice(["file", "file", "host"])}
+    nameservers = []
+    for _ in range(rng.randrange(5)):
+        nameservers.append(rng.choice([
+            f"192.0.2.{rng.randrange(1, 255)}",
+            f"2001:db8:{rng.randrange(1, 4096):x}::1",
+        ]))
+    if nameservers:
+        network["nameservers"] = nameservers
+    interfaces = {}
+    for index in range(rng.randrange(4)):
+        iface = {}
+        if rng.random() < 0.8:
+            method = rng.choice(IPV4_METHODS)
+            family = {"method": method}
+            if method == "static":
+                family["address"] = f"192.0.2.{rng.randrange(1, 255)}/24"
+                if rng.random() < 0.5:
+                    family["gateway"] = "192.0.2.1"
+            iface["ipv4"] = family
+        if rng.random() < 0.8:
+            method = rng.choice(IPV6_METHODS)
+            family = {"method": method}
+            if method == "static":
+                family["address"] = (
+                    f"2001:db8:{rng.randrange(1, 4096):x}::1/64"
+                )
+                if rng.random() < 0.5:
+                    family["gateway"] = "fe80::1"
+                if rng.random() < 0.5:
+                    family["slaac"] = rng.random() < 0.5
+            iface["ipv6"] = family
+        interfaces[f"eth{index}"] = iface
+    network["interfaces"] = interfaces
+    return network
+
+
+class TestNetworkRenderParity(unittest.TestCase):
+    """Random valid network sections render the same in both readers
+
+    The seeded generator crosses methods, families, several interfaces,
+    gateways and up to four nameservers of both families, so drift
+    between the port and keel's original shows up without hand-picking
+    cases. Keel-gated, like the rest of the differential tests.
+    """
+
+    def setUp(self):
+        checkout = keel_checkout()
+        if checkout is None:
+            self.skipTest("keel is not at hand (set KEEL_SRC)")
+        if checkout not in sys.path:
+            sys.path.insert(0, checkout)
+        from keel.spec.render import network_env as keel_network_env
+
+        self.keel_network_env = keel_network_env
+
+    def test_random_network_sections_render_the_same_variables(self):
+        for seed in SEEDS:
+            rng = random.Random(seed)
+            network = rand_network(rng)
+            with self.subTest(seed=seed):
+                ours = declarative._network_env(network)
+                theirs = self.keel_network_env(network)
+                self.assertEqual(ours, theirs)
 
 
 class TestLoadFuzz(unittest.TestCase):
