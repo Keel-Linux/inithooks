@@ -6,6 +6,11 @@
 # runners, no secrets. Findings that are not a risk are listed, each with its
 # justification, in .github/security-baseline; gitleaks fixtures, if any, in
 # .github/gitleaks.toml.
+# Every job runs on keel-container, a new rootless container for each
+# job: no job of inithooks needs the LXC of the runner host, and a job of
+# a pull request from a fork must not run on the host. The runner refuses
+# a fork job on keel-host whatever this file says (handbook
+# docs/infra/keel-lxc-2.md, "Fork pull requests run in a container").
 name: security
 on:
   pull_request:
@@ -16,7 +21,7 @@ permissions:
   contents: read
 jobs:
   security:
-    runs-on: keel-host
+    runs-on: keel-container
     uses: keel-linux/.github/.github/workflows/security-scan.yml@main
     permissions:
       contents: read
