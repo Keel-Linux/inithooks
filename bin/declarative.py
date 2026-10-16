@@ -70,7 +70,7 @@ def read(path: str) -> dict:
     except declarative.DeclarativeError as e:
         fatal(e)
 
-    errors = declarative.validate(doc)
+    errors = declarative.validate(doc, log=lambda msg: log(msg, "warn"))
     if errors:
         for error in errors:
             log(f"{path}: {error}", "err")
@@ -148,6 +148,13 @@ def main():
     for message in declarative.deprecations(doc):
         log(f"{path}: {message}", "warn")
         print(f"warning: {path}: {message}", file=sys.stderr)
+    other = declarative.unrendered_sections(doc)
+    if other:
+        log(
+            f"{path}: {', '.join(map(str, other))}: not rendered here,"
+            " left to keel",
+            "info",
+        )
     if action == "check":
         print(f"{path}: ok")
     elif action == "render":

@@ -20,6 +20,13 @@ inithooks (2.3.6+keel27) trixie; urgency=medium
     that is not UTF-8 crashed the reader with a traceback instead of a
     DeclarativeError) and keel end-to-end tests (tests/test_declarative_keel.py);
     a "keel" CI job checks keel out and runs them (inithooks#31).
+    keel is asked, not required: a keel that is installed but cannot be
+    imported, or whose validator raises, is logged and stepped over, with
+    the built-in copy answering instead, because the conf phase is not
+    something the boot depends on and a broken optional validator must not
+    fail a headless boot. unrendered_sections() and a line in the inithooks
+    log name the top level sections this reader leaves to keel, so the
+    accept-and-skip is visible rather than silent.
 
  -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Thu, 15 Oct 2026 23:30:00 +0000
 

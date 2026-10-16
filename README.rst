@@ -539,8 +539,10 @@ Notes:
       (appliance, installation, overlays, monitor, and whatever keel gains
       later) is not an error: keel owns the whole vocabulary, and it is the
       writer of the description and the reader that acts on it after the
-      first boot, so this reader leaves such a section to it. An unknown key
-      *inside* a section this reader renders is still an error.
+      first boot, so this reader leaves such a section to it. The names of
+      those sections are written once to the inithooks log, so the reader
+      does not pass them over in silence. An unknown key *inside* a section
+      this reader renders is still an error.
     - The description is validated by the keel command's own validator when
       the keel package is installed, so the first boot accepts every section
       and field keel accepts, including the appliance, installation, overlays
@@ -548,7 +550,11 @@ Notes:
       carry keel falls back to a copy of that validation held inside
       inithooks; the copy is deliberately not a dependency, and the two are
       kept from drifting by tests/test_vocabulary.py and the differential
-      corpus of tests/test_spec_corpus.py. This is why a spec the Core image's
+      corpus of tests/test_spec_corpus.py. keel is asked, not required: a
+      first boot must not depend on it to render the conf, so if a keel that
+      is installed raises on import or in its validator, the error is logged
+      and the built-in copy answers instead (the strict check for an operator
+      is "keel spec validate" offline). This is why a spec the Core image's
       tooling accepts boots as it is, without the conf having to be rendered
       beforehand.
     - security.updates_at_first_boot controls one thing: whether 95secupdates

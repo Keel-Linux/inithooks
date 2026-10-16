@@ -194,8 +194,10 @@ def canonical(doc: Any) -> Any:
     return result
 
 
-def keel_validator() -> Callable[..., list[str]] | None:
-    """keel's own validator, or None when keel is not installed
+def keel_validator(
+    log: Callable[[str], None] | None = None,
+) -> Callable[..., list[str]] | None:
+    """keel's own validator, or None when keel is not usable here
 
     keel is the writer of the instance description and the reader that
     acts on it after the first boot, so its validator is the one that
@@ -206,28 +208,67 @@ def keel_validator() -> Callable[..., list[str]] | None:
     unwritten, so a headless boot only worked if the conf was rendered
     beforehand. keel is deliberately not a dependency, so an image that
     does not carry it answers None and validate() falls back to the copy
-    in _validate_local.
+    in _validate_local. A keel that is installed but cannot be imported
+    is the same answer, and says so through `log` rather than bricking a
+    boot the built-in copy can still validate; the strict check for an
+    operator is `keel spec validate` offline.
     """
     try:
         from keel.spec.validate import validate as keel_validate
     except ImportError:
         return None
+    except Exception as e:  # a keel that is present but broken, not absent
+        if log is not None:
+            log(
+                f"keel is installed but its validator did not import ({e});"
+                " using the built-in copy"
+            )
+        return None
     return keel_validate
 
 
-def validate(doc: dict) -> list[str]:
+def validate(
+    doc: dict, log: Callable[[str], None] | None = None
+) -> list[str]:
     """Return a list of error messages, empty when the document is valid
 
     keel's validator is asked when keel is installed, so the first boot
     accepts what keel accepts; the copy in _validate_local answers where
-    keel is not installed. Either way a deprecated field name is read
-    under its current name, so a description written before a rename gets
-    the real errors rather than "unknown key".
+    keel is not installed, or where its validator raises. Either way a
+    deprecated field name is read under its current name, so a description
+    written before a rename gets the real errors rather than "unknown
+    key". The reader is the conf phase, which the boot does not depend on,
+    so a keel that fails is logged and stepped over rather than failing
+    the first boot (the same stop-not-abort policy as keel's own
+    10keel-system).
     """
-    keel_validate = keel_validator()
+    keel_validate = keel_validator(log)
     if keel_validate is not None:
-        return list(keel_validate(canonical(doc)))
+        try:
+            return list(keel_validate(canonical(doc)))
+        except Exception as e:
+            if log is not None:
+                log(
+                    f"keel's validator failed ({e}); using the built-in"
+                    " copy"
+                )
     return _validate_local(doc)
+
+
+def unrendered_sections(doc: Any) -> list[str]:
+    """Top level sections this reader renders nothing from, in order
+
+    keel owns the whole vocabulary, so a section outside RENDERED_SECTIONS
+    is not an error; naming them lets the caller log what it leaves to
+    keel instead of accepting them in silence.
+    """
+    if not isinstance(doc, dict):
+        return []
+    return [
+        key
+        for key in doc
+        if key not in RENDERED_SECTIONS and key != "version"
+    ]
 
 
 def _validate_local(doc: dict) -> list[str]:

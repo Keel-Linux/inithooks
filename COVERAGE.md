@@ -31,9 +31,24 @@ malformed `appliance` and an unknown top-level key are refused) and
 `TestValidationIsDelegatedToKeel` in `tests/test_vocabulary.py`. The
 local-behaviour tests now call `_validate_local` directly, so a machine
 that happens to have keel installed does not change what they measure.
+
+The change is hardened where it touches something inithooks does not
+control. `keel_validator()` now catches a keel that is installed but
+cannot be imported, not only an absent one, and `validate()` catches a
+keel whose validator raises (a moved signature, say), logs one line and
+falls back to the built-in copy: the conf phase is not something the boot
+depends on, so a broken keel is stepped over rather than failing the
+first boot, the stop-not-abort policy of keel's own `10keel-system` and
+the "recoverable failure" that cloud-init reports and continues on.
+`unrendered_sections()` names the top level sections this reader does not
+render, and `bin/declarative.py` logs them once, so the accept-and-skip
+of the fallback is visible instead of silent. `keel_validator()` and
+`validate()` take an optional `log` callable for this; `00declarative`
+passes the inithooks log, the tests pass a recorder.
+
 `libinithooks/declarative.py` 100 percent, `bin/declarative.py` 99 (the
-long-standing 119->108 branch miss). 564 pytest with keel beside the
-checkout, 555 plus 9 keel-gated skips without it.
+long-standing 119->108 branch miss). 571 pytest with keel beside the
+checkout, 562 plus 9 keel-gated skips without it.
 
 ## Branch fix/secupdates-never-hold-boot: shell 99.71 (2026-10-03)
 

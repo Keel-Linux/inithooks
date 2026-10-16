@@ -242,6 +242,77 @@ class TestValidationIsDelegatedToKeel(unittest.TestCase):
             declarative._validate_local(doc("version: 1\n")), []
         )
 
+    def test_a_keel_that_cannot_be_imported_is_logged_and_stepped_over(self):
+        class Broken:
+            def __getattr__(self, name):
+                raise RuntimeError("keel is corrupt")
+
+        broken = {
+            "keel": types.ModuleType("keel"),
+            "keel.spec": types.ModuleType("keel.spec"),
+            "keel.spec.validate": Broken(),
+        }
+        messages = []
+        with mock.patch.dict(sys.modules, broken):
+            self.assertIsNone(declarative.keel_validator(log=messages.append))
+        self.assertTrue(any("keel" in m for m in messages), messages)
+
+    def test_a_broken_keel_without_a_logger_still_falls_back(self):
+        class Broken:
+            def __getattr__(self, name):
+                raise RuntimeError("keel is corrupt")
+
+        broken = {
+            "keel": types.ModuleType("keel"),
+            "keel.spec": types.ModuleType("keel.spec"),
+            "keel.spec.validate": Broken(),
+        }
+        with mock.patch.dict(sys.modules, broken):
+            self.assertIsNone(declarative.keel_validator())
+
+    def test_a_keel_whose_validator_raises_falls_back_to_the_copy(self):
+        modules, _ = self.fake_keel([])
+
+        def boom(document, **kwargs):
+            raise TypeError("validate() signature moved")
+
+        modules["keel.spec.validate"].validate = boom
+        messages = []
+        with mock.patch.dict(sys.modules, modules):
+            found = declarative.validate(
+                doc("version: 1\ninstance:\n  colour: blue\n"),
+                log=messages.append,
+            )
+        self.assertIn("instance.colour: unknown key", found)
+        self.assertTrue(any("keel" in m for m in messages), messages)
+
+    def test_a_raising_keel_without_a_logger_still_falls_back(self):
+        modules, _ = self.fake_keel([])
+
+        def boom(document, **kwargs):
+            raise TypeError("validate() signature moved")
+
+        modules["keel.spec.validate"].validate = boom
+        with mock.patch.dict(sys.modules, modules):
+            found = declarative.validate(
+                doc("version: 1\ninstance:\n  colour: blue\n")
+            )
+        self.assertIn("instance.colour: unknown key", found)
+
+    def test_unrendered_sections_names_what_is_left_to_keel(self):
+        text = (
+            "version: 1\n"
+            "instance:\n  hostname: blog\n"
+            "appliance:\n  name: core\n"
+            "monitor:\n  enabled: true\n"
+        )
+        self.assertEqual(
+            declarative.unrendered_sections(doc(text)),
+            ["appliance", "monitor"],
+        )
+        self.assertEqual(declarative.unrendered_sections(doc(FULL)), [])
+        self.assertEqual(declarative.unrendered_sections(None), [])
+
 
 if __name__ == "__main__":
     unittest.main()

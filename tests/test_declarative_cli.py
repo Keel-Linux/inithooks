@@ -112,6 +112,31 @@ class TestCheck(CLITestCase):
         path = self.write_decl(VALID)
         self.assertEqual(self.run_cli("-c", path)[0], 0)
 
+    def test_a_section_this_reader_does_not_render_is_logged(self):
+        path = self.write_decl(
+            "version: 1\n"
+            "instance:\n  hostname: blog\n"
+            "appliance:\n  name: core\n"
+            "monitor:\n  enabled: true\n"
+        )
+        code, _, err = self.run_cli("--check", path)
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertTrue(
+            any(
+                "appliance" in msg and "not rendered here" in msg
+                for _, msg in self.log.entries
+            ),
+            self.log.entries,
+        )
+
+    def test_a_rendered_document_logs_no_unrendered_section(self):
+        path = self.write_decl(VALID)
+        self.run_cli("--check", path)
+        self.assertFalse(
+            any("not rendered here" in msg for _, msg in self.log.entries)
+        )
+
     def test_absent_file_is_a_no_op_that_exits_0(self):
         path = join(self.tmpdir, "absent.yaml")
         for option in ("--check", "--render", "--apply"):
