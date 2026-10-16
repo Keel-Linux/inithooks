@@ -1,3 +1,24 @@
+inithooks (2.3.6+keel30) trixie; urgency=medium
+
+  * Address the review of !48. The keel CI job now runs on keel-container
+    (the host runners refuse a fork job since #49), checks keel out to
+    .keel-src rather than keel/ (with PYTHONPATH=. a workspace directory
+    named keel is imported as the package itself, so the parity tests
+    failed in setUp and everything else skipped), and pins ref to a SHA
+    so a keel change cannot pass or fail the suite without a change here.
+    The .github/workflows/tests.yml half of the job is gone again:
+    GitHub is a read-only mirror with no keel runner. tests/helpers.py
+    gains keel_module(): when KEEL_SRC is set, a keel that fails to
+    import is an error, not a skip, so the keel job cannot go green
+    without the differential tests, and the render tests use the same
+    helper. keel_validator() is quiet only for a keel that is not there
+    at all (ModuleNotFoundError naming keel itself): a keel installed
+    but missing a dependency is broken and says so through the log. The
+    secret-file open reports e.strerror instead of calling every error
+    but ELOOP "not found".
+
+ -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Fri, 16 Oct 2026 05:10:00 +0000
+
 inithooks (2.3.6+keel29) trixie; urgency=medium
 
   * Harden the declarative reader's file handling the way privileged

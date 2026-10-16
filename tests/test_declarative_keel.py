@@ -19,7 +19,7 @@ from os.path import abspath, dirname, exists, join
 
 import yaml
 
-from helpers import keel_checkout
+from helpers import keel_checkout, keel_render
 
 ROOT = dirname(dirname(abspath(__file__)))
 CLI = join(ROOT, "bin", "declarative.py")
@@ -163,14 +163,11 @@ class KeelNetworkParity(unittest.TestCase):
     ]
 
     def setUp(self):
-        checkout = keel_checkout()
-        if checkout is None:
+        render = keel_render()
+        if render is None:
             self.skipTest("keel is not at hand (set KEEL_SRC)")
-        if checkout not in sys.path:
-            sys.path.insert(0, checkout)
-        from keel.spec.render import network_env as keel_network_env
-
-        self.keel_network_env = keel_network_env
+        self.keel_render = render
+        self.keel_network_env = render.network_env
         sys.path.insert(0, ROOT)
         from libinithooks import declarative
 
@@ -195,12 +192,10 @@ class KeelNetworkParity(unittest.TestCase):
         """The conf file itself, not only the variable set: the hook
         sources the file, and the day-two conf is compared line by line
         in tests, so the order must match too"""
-        from keel.spec.render import render_env as keel_render_env
-
         for label, document in self.documents():
             with self.subTest(document=label):
                 ours = self.declarative.render_env(document, {})
-                theirs = keel_render_env(document, {})
+                theirs = self.keel_render.render_env(document, {})
                 our_lines = [line for line in ours.splitlines()
                              if line.startswith("export IP")]
                 their_lines = [line for line in theirs.splitlines()

@@ -9,11 +9,10 @@ dependency (the CI runner installs pytest, coverage and PyYAML alone).
 
 import os
 import random
-import sys
 import tempfile
 import unittest
 
-from helpers import declarative, keel_checkout, keel_validate
+from helpers import declarative, keel_render, keel_validate
 
 SEEDS = range(50)
 UNRENDERED = ("appliance", "installation", "overlays", "monitor", "nonsense")
@@ -171,14 +170,10 @@ class TestNetworkRenderParity(unittest.TestCase):
     """
 
     def setUp(self):
-        checkout = keel_checkout()
-        if checkout is None:
+        render = keel_render()
+        if render is None:
             self.skipTest("keel is not at hand (set KEEL_SRC)")
-        if checkout not in sys.path:
-            sys.path.insert(0, checkout)
-        from keel.spec.render import network_env as keel_network_env
-
-        self.keel_network_env = keel_network_env
+        self.keel_network_env = render.network_env
 
     def test_random_network_sections_render_the_same_variables(self):
         for seed in SEEDS:

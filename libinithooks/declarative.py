@@ -226,11 +226,20 @@ def keel_validator(
     in _validate_local. A keel that is installed but cannot be imported
     is the same answer, and says so through `log` rather than bricking a
     boot the built-in copy can still validate; the strict check for an
-    operator is `keel spec validate` offline.
+    operator is `keel spec validate` offline. The quiet case is only a
+    keel that is not there at all (ModuleNotFoundError naming keel
+    itself): a keel that is installed but misses one of its own
+    dependencies is broken, not absent, and says so.
     """
     try:
         from keel.spec.validate import validate as keel_validate
-    except ImportError:
+    except ModuleNotFoundError as e:
+        if e.name and e.name != "keel" and not e.name.startswith("keel."):
+            if log is not None:
+                log(
+                    f"keel is installed but its validator did not import"
+                    f" (missing {e.name}); using the built-in copy"
+                )
         return None
     except Exception as e:  # a keel that is present but broken, not absent
         if log is not None:
@@ -710,7 +719,9 @@ def _open_secret_file(path: str) -> int:
             raise DeclarativeError(
                 f"{path}: secret file must not be a symlink"
             )
-        raise DeclarativeError(f"{path}: secret file not found")
+        raise DeclarativeError(
+            f"{path}: secret file not found: {e.strerror}"
+        )
     st = os.fstat(fd)
     if not statlib.S_ISREG(st.st_mode):
         os.close(fd)

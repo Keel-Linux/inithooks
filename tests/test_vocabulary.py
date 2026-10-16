@@ -270,6 +270,45 @@ class TestValidationIsDelegatedToKeel(unittest.TestCase):
         with mock.patch.dict(sys.modules, broken):
             self.assertIsNone(declarative.keel_validator())
 
+    def test_a_keel_missing_a_dependency_is_logged_not_silent(self):
+        """installed-but-broken and absent are different answers: only
+        the absent one is quiet (review of !48)"""
+
+        class MissingDep:
+            def __getattr__(self, name):
+                raise ModuleNotFoundError(
+                    "No module named 'yaml'", name="yaml"
+                )
+
+        broken = {
+            "keel": types.ModuleType("keel"),
+            "keel.spec": types.ModuleType("keel.spec"),
+            "keel.spec.validate": MissingDep(),
+        }
+        messages = []
+        with mock.patch.dict(sys.modules, broken):
+            self.assertIsNone(declarative.keel_validator(log=messages.append))
+        self.assertTrue(any("missing yaml" in m for m in messages), messages)
+
+    def test_an_absent_keel_is_quiet(self):
+        """no keel installed is the normal case, not a problem to log"""
+
+        class Absent:
+            def __getattr__(self, name):
+                raise ModuleNotFoundError(
+                    "No module named 'keel'", name="keel"
+                )
+
+        absent = {
+            "keel": types.ModuleType("keel"),
+            "keel.spec": types.ModuleType("keel.spec"),
+            "keel.spec.validate": Absent(),
+        }
+        messages = []
+        with mock.patch.dict(sys.modules, absent):
+            self.assertIsNone(declarative.keel_validator(log=messages.append))
+        self.assertEqual(messages, [])
+
     def test_a_keel_whose_validator_raises_falls_back_to_the_copy(self):
         modules, _ = self.fake_keel([])
 
