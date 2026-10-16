@@ -1,37 +1,27 @@
-# Coverage gates for inithooks, one per language (docs/ci-cd.md):
-#   tests / coverage   shell: tests/coverage.sh under kcov, 98 percent, the
-#                      number measured on master (lowest file lib/init-fence.sh
-#                      63 of 64 lines, COVERAGE.md "measured baseline")
-#   python / coverage  pytest under coverage.py over libinithooks and bin,
-#                      95 percent, the bar for project-authored code; the
-#                      inherited modules without tests are omitted in
-#                      pyproject.toml until their tests land
-# Both are required checks on master. Thresholds are only ever raised.
+# Light CI on GitHub-hosted runners, for pull requests on the GitHub mirror
+# (decision 0056). The full CI is .forgejo/workflows on git.pop.coop, and
+# .forgejo/workflows/tests.yml has the notes on each job.
 name: tests
+
 on:
   pull_request:
-  push:
-    branches: [master]
+
+permissions:
+  contents: read
+
 jobs:
   tests:
-    uses: keel-linux/.github/.github/workflows/test-shell.yml@main
+    uses: keel-linux/.github/.github/workflows/github-test-shell.yml@main
     with:
       threshold: 98
-      # tests/test-packaging.bats runs debhelper over debian/ and reads the
-      # maintainer scripts it generates, and tests/test-firstboot-pty.bats
-      # runs the first boot screens with the real dialog; in CI a missing
-      # package fails them
       apt-packages: debhelper dialog python3-dialog
+
   python:
-    uses: keel-linux/.github/.github/workflows/test-python.yml@main
+    uses: keel-linux/.github/.github/workflows/github-test-python.yml@main
     with:
       threshold: 95
       package: libinithooks,bin
       tests: tests
-  # A change that ships must come with a changelog entry, or it cannot be
-  # installed and never reaches an appliance. The rule and its tests are
-  # bin/require-changelog of the .github repository. The check is
-  # "package / changelog"; it runs on pull requests only.
+
   package:
-    if: github.event_name == 'pull_request'
-    uses: keel-linux/.github/.github/workflows/require-changelog.yml@main
+    uses: keel-linux/.github/.github/workflows/github-require-changelog.yml@main
