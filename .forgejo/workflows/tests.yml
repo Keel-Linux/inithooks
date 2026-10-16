@@ -10,6 +10,11 @@
 #                      inherited modules without tests are omitted in
 #                      pyproject.toml until their tests land
 # Both are required checks on master. Thresholds are only ever raised.
+# Every job runs on keel-container, a new rootless container for each
+# job: no job of inithooks needs the LXC of the runner host, and a job of
+# a pull request from a fork must not run on the host. The runner refuses
+# a fork job on keel-host whatever this file says (handbook
+# docs/infra/keel-lxc-2.md, "Fork pull requests run in a container").
 name: tests
 on:
   pull_request:
@@ -17,7 +22,7 @@ on:
     branches: [master]
 jobs:
   tests:
-    runs-on: keel-host
+    runs-on: keel-container
     uses: keel-linux/.github/.github/workflows/test-shell.yml@main
     with:
       threshold: 98
@@ -27,7 +32,7 @@ jobs:
       # package fails them
       apt-packages: debhelper dialog python3-dialog
   python:
-    runs-on: keel-host
+    runs-on: keel-container
     uses: keel-linux/.github/.github/workflows/test-python.yml@main
     with:
       threshold: 95
@@ -39,5 +44,5 @@ jobs:
   # "package / changelog"; it runs on pull requests only.
   package:
     if: github.event_name == 'pull_request'
-    runs-on: keel-host
+    runs-on: keel-container
     uses: keel-linux/.github/.github/workflows/require-changelog.yml@main
