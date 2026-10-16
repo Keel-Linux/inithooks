@@ -476,45 +476,164 @@ def _managed_by(network: dict) -> str:
     return str(network.get("managed_by") or default_managed_by())
 
 
-def _network_env(network: Any) -> dict[str, str]:
-    """Map the network section onto the IP_* variables 01ipconfig reads
+MAX_NAMESERVERS = 2
+# ifupdown has no SLAAC method of its own: `inet6 dhcp` is what the hook
+# writes for both, and it keeps SLAAC on as confconsole does (Keel-Linux
+# keel.spec.render).
+IP6_CONFIG = {"static": "static", "dhcp": "dhcp", "auto": "dhcp",
+              "manual": "manual"}
 
+
+def _network_env(network: Any) -> dict[str, str]:
+    """Map the network section onto the IP_* and IP6_* variables 01ipconfig
+    reads
+
+    A port of keel.spec.render.network_env (inithooks#21): the two readers
+    render the same file for the same spec, so a static IPv6 address the
+    first boot writes is the one a day-two `keel spec apply` would write.
     Only the file managed case exports anything: when the host owns the
-    interface configuration there is nothing for 01ipconfig to write.
+    interface configuration there is nothing for 01ipconfig to write. The
+    IP6_* variables only appear when an interface declares an ipv6 block,
+    so a spec without one renders the same conf it always did.
+
+    The hook configures one interface. When the spec declares several, the
+    last ipv6 block wins as a whole, so an address is never exported next
+    to another interface's method. The nameservers are placed by
+    _nameserver_env, the keel#45 rule.
     """
     env: dict[str, str] = {}
     if not isinstance(network, dict) or _managed_by(network) != "file":
         return env
 
     interfaces = network.get("interfaces") or {}
+    nameservers = [str(server) for server in network.get("nameservers") or []]
+    ipv4_env: dict[str, str] = {}
     for iface in interfaces.values():
-        ipv4 = (iface or {}).get("ipv4") or {}
-        method = str(ipv4.get("method") or "none")
-        if method == "none":
-            continue
-        env["IP_CONFIG"] = method
-        if method != "static":
-            continue
-        address = ipaddress.ip_interface(str(ipv4["address"]))
-        env["IP_ADDRESS"] = str(address.ip)
-        env["IP_NETMASK"] = str(address.netmask)
-        _set(env, "IP_GW", ipv4.get("gateway"))
-
-    nameservers = [
-        str(server)
-        for server in (network.get("nameservers") or [])
-        if _is_ipv4(str(server))
-    ]
-    for index, server in enumerate(nameservers[:2], start=1):
-        env[f"IP_DNS{index}"] = server
+        ipv4_env.update(_ipv4_env((iface or {}).get("ipv4") or {}))
+    ipv6_env: dict[str, str] = {}
+    for iface in interfaces.values():
+        ipv6_env = _ipv6_env((iface or {}).get("ipv6") or {}) or ipv6_env
+    dns = _nameserver_env(nameservers, {**ipv4_env, **ipv6_env})
+    env.update(ipv4_env)
+    env.update(_prefixed(dns, "IP_DNS"))
+    env.update(ipv6_env)
+    env.update(_prefixed(dns, "IP6_DNS"))
     return env
 
 
+def _ipv4_env(ipv4: dict) -> dict[str, str]:
+    method = str(ipv4.get("method") or "none")
+    if method == "none":
+        return {}
+    env = {"IP_CONFIG": method}
+    if method != "static":
+        return env
+    address = ipaddress.ip_interface(str(ipv4["address"]))
+    env["IP_ADDRESS"] = str(address.ip)
+    env["IP_NETMASK"] = str(address.netmask)
+    _set(env, "IP_GW", ipv4.get("gateway"))
+    return env
+
+
+def _ipv6_env(ipv6: dict) -> dict[str, str]:
+    """IP6_ADDRESS keeps its prefix length: an inet6 stanza has no netmask
+
+    IP6_SLAAC is exported only to turn SLAAC off; the hook's default keeps
+    it, and a spec that does not say `slaac: false` renders as before.
+    """
+    method = str(ipv6.get("method") or "none")
+    if method == "none":
+        return {}
+    env = {"IP6_CONFIG": IP6_CONFIG[method]}
+    if method != "static":
+        return env
+    env["IP6_ADDRESS"] = str(ipaddress.ip_interface(str(ipv6["address"])))
+    _set(env, "IP6_GW", ipv6.get("gateway"))
+    if ipv6.get("slaac") is False:
+        env["IP6_SLAAC"] = "no"
+    return env
+
+
+def _nameserver_env(nameservers: list[str], env: dict[str, str]) -> (
+    dict[str, str]
+):
+    """The IP_DNS* and IP6_DNS* variables for the methods already in `env`
+
+    lib/ipconfig.sh writes dns-nameservers only in a static stanza, two at
+    most, and resolvconf takes them from any stanza whatever the server's
+    family. So when one family is static and the other is not, the static
+    stanza carries the declared servers of both families: a dynamic
+    family's servers are not dropped for being of the other family
+    (keel#45). Two are kept, the first of each family before a second of
+    either (one_of_each), so a broken upstream of one family still leaves
+    a resolver of the other; the static family's own second server can be
+    the one left out. When both are static, or neither, each family's
+    servers go to its own stanza, the first two of each; with neither
+    static, the file holds none of them.
+    """
+    ipv4_static = env.get("IP_CONFIG") == "static"
+    ipv6_static = env.get("IP6_CONFIG") == "static"
+    if ipv4_static and not ipv6_static:
+        return _dns_env("IP_DNS", _one_of_each(nameservers))
+    if ipv6_static and not ipv4_static:
+        return _dns_env("IP6_DNS", _one_of_each(nameservers))
+    dns = _dns_env("IP_DNS", filter(_is_ipv4, nameservers))
+    if "IP6_CONFIG" in env:
+        dns.update(_dns_env("IP6_DNS", filter(_is_ipv6, nameservers)))
+    return dns
+
+
+def _one_of_each(nameservers: list[str]) -> list[str]:
+    """The two servers one stanza keeps, in the spec's order
+
+    The first server of each family comes before a second of either, so
+    [2001:db8:1::53, 2001:db8:2::53, 192.0.2.53] keeps 2001:db8:1::53 and
+    192.0.2.53; a list of one family keeps its first two.
+    """
+    # a server declared twice must not displace the other family's
+    nameservers = list(dict.fromkeys(nameservers))
+    firsts: dict[bool, str] = {}
+    for server in nameservers:
+        firsts.setdefault(_is_ipv6(server), server)
+    kept = set(firsts.values())
+    for server in nameservers:
+        if len(kept) >= MAX_NAMESERVERS:
+            break
+        kept.add(server)
+    return [server for server in nameservers if server in kept]
+
+
+def _dns_env(prefix: str, servers: Any) -> dict[str, str]:
+    """The first two nameservers given, as PREFIX1 and PREFIX2"""
+    return {
+        f"{prefix}{index}": server
+        for index, server in enumerate(
+            list(servers)[:MAX_NAMESERVERS], start=1
+        )
+    }
+
+
+def _prefixed(env: dict[str, str], prefix: str) -> dict[str, str]:
+    """The variables PREFIX1 and PREFIX2 of `env`, without the others"""
+    return {
+        key: value for key, value in env.items()
+        if key[:-1] == prefix
+    }
+
+
 def _is_ipv4(value: str) -> bool:
+    return _ip_version(value) == 4
+
+
+def _is_ipv6(value: str) -> bool:
+    return _ip_version(value) == 6
+
+
+def _ip_version(value: str) -> int | None:
     try:
-        return ipaddress.ip_address(value).version == 4
+        return ipaddress.ip_address(value).version
     except ValueError:
-        return False
+        return None
 
 
 def _read_secret_file(path: str) -> str:
@@ -723,15 +842,11 @@ def _validate_network(network: Any) -> list[str]:
     if error:
         return errors + [error]
     for name, iface in (interfaces or {}).items():
-        errors.extend(
-            _validate_interface(
-                f"network.interfaces.{name}", iface, str(managed_by or "")
-            )
-        )
+        errors.extend(_validate_interface(f"network.interfaces.{name}", iface))
     return errors
 
 
-def _validate_interface(key: str, iface: Any, managed_by: str) -> list[str]:
+def _validate_interface(key: str, iface: Any) -> list[str]:
     error = _mapping_error(key, iface)
     if error or not iface:
         return [error] if error else []
@@ -742,14 +857,6 @@ def _validate_interface(key: str, iface: Any, managed_by: str) -> list[str]:
             errors.append(f"{key}.{family}: unknown key")
     errors.extend(_validate_family(f"{key}.ipv4", iface.get("ipv4"), 4))
     errors.extend(_validate_family(f"{key}.ipv6", iface.get("ipv6"), 6))
-
-    ipv6 = iface.get("ipv6") or {}
-    if managed_by == "file" and ipv6.get("method") == "static":
-        errors.append(
-            f"{key}.ipv6: static addresses cannot be written to"
-            " /etc/network/interfaces by this version; use"
-            " network.managed_by: host and set the address on the host"
-        )
     return errors
 
 

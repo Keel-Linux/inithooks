@@ -4,6 +4,27 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/accept-keel-spec-sections: Python 99 (2026-10-16)
+
+The first boot writes a static IPv6 address, the same one keel writes
+(inithooks#21). `_network_env()` is now a port of
+`keel.spec.render.network_env`: `_ipv6_env()` exports `IP6_CONFIG`
+(`auto` and `dhcp` both render as `dhcp`, which is what ifupdown has),
+`IP6_ADDRESS` with its prefix length, `IP6_GW` and `IP6_SLAAC=no` when the
+spec says `slaac: false`; `_nameserver_env()`/`_one_of_each()` port the
+keel#45 placement, where a single static family carries one resolver of
+each family. The stale refusal of `ipv6.method: static` under
+`managed_by: file` is gone, and the `managed_by` argument of
+`_validate_interface()` went with it. An ipv6 block now exports its
+variables, so a spec without one still renders the conf it always did; the
+parity test against a keel checkout holds the port to the original over a
+matrix of 8 documents crossed with 7 nameserver lists, and the CLI test
+writes the #21 conf (static IPv6, slaac off, mixed-family resolvers).
+
+`libinithooks/declarative.py` 100 percent, `bin/declarative.py` 99 (the
+long-standing 119->108 branch miss). 583 pytest with keel beside the
+checkout, 572 plus 11 keel-gated skips without it.
+
 ## Branch fix/accept-keel-spec-sections: Python 99 (2026-10-15)
 
 The first boot accepts every spec section keel accepts (inithooks#31).

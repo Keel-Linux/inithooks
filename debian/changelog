@@ -1,3 +1,23 @@
+inithooks (2.3.6+keel28) trixie; urgency=medium
+
+  * 00declarative writes a static IPv6 address at first boot, the same one
+    keel writes (inithooks#21). The first-boot reader refused
+    network.interfaces.<if>.ipv6.method: static under managed_by: file
+    ("static addresses cannot be written to /etc/network/interfaces by
+    this version") and exported no IP6_* variables at all, while 01ipconfig
+    has read them all along and keel spec apply renders them; so a static
+    IPv6 address was missing until the first day-two converge, breaking
+    decision 0018. libinithooks/declarative.py now ports
+    keel.spec.render.network_env: the IPv6 block exports IP6_CONFIG (auto
+    and dhcp both render as dhcp, which is what ifupdown has), IP6_ADDRESS
+    with its prefix length, IP6_GW, IP6_SLAAC=no when the spec says
+    slaac: false, and the keel#45 nameserver placement, where a single
+    static family carries one resolver of each family. The stale refusal
+    is gone; a new parity test holds this port to keel's renderer over a
+    matrix of documents, run in the keel CI job.
+
+ -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Fri, 16 Oct 2026 03:52:20 +0000
+
 inithooks (2.3.6+keel27) trixie; urgency=medium
 
   * The declarative first boot accepts every spec section keel accepts.

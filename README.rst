@@ -584,9 +584,13 @@ Notes:
       writes the interface configuration) means the reader writes no
       addresses. It compares the declared addresses with the live ones and
       logs an error if they differ, without failing the run.
-      network.managed_by: file maps the IPv4 settings onto the IP_*
-      variables read by 01ipconfig; static IPv6 addresses cannot be written
-      to /etc/network/interfaces yet and are refused.
+      network.managed_by: file maps the network section onto the IP_* and
+      IP6_* variables read by 01ipconfig, exactly the variables keel's own
+      renderer exports for the same document (inithooks#21): a static IPv6
+      address is written to /etc/network/interfaces at first boot, with the
+      prefix length kept on IP6_ADDRESS, SLAAC kept unless the spec says
+      slaac: false, and nameservers placed by the keel#45 rule (a single
+      static family carries one resolver of each family).
 
     - tls.acme is accepted and validated (enabled, challenge, domains,
       agree_tos, as the instance tooling reads them), but no certificate is

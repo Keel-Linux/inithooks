@@ -52,7 +52,7 @@ class TestNetwork(unittest.TestCase):
 
 
 class TestNetworkMapping(unittest.TestCase):
-    def file_managed(self, ipv4: str) -> dict:
+    def file_managed(self, ipv4: str, ipv6: str = "auto") -> dict:
         return env(
             "version: 1\n"
             "network:\n"
@@ -62,14 +62,118 @@ class TestNetworkMapping(unittest.TestCase):
             "      ipv4:\n"
             f"        method: {ipv4}\n"
             "      ipv6:\n"
-            "        method: auto\n"
+            f"        method: {ipv6}\n"
         )
 
-    def test_ipv4_none_exports_nothing(self):
-        self.assertEqual(self.file_managed("none"), {})
+    def test_ipv4_none_still_exports_the_ipv6_method(self):
+        # an ipv6 block exports its variables from this version on
+        # (inithooks#21): the hook reads IP6_* on its own
+        self.assertEqual(
+            self.file_managed("none"), {"IP6_CONFIG": "dhcp"}
+        )
 
-    def test_ipv4_dhcp_exports_only_the_method(self):
-        self.assertEqual(self.file_managed("dhcp"), {"IP_CONFIG": "dhcp"})
+    def test_ipv4_none_ipv6_none_exports_nothing(self):
+        self.assertEqual(self.file_managed("none", "none"), {})
+
+    def test_ipv4_dhcp_exports_both_methods(self):
+        self.assertEqual(
+            self.file_managed("dhcp"),
+            {"IP_CONFIG": "dhcp", "IP6_CONFIG": "dhcp"},
+        )
+
+    def test_ipv6_method_maps_to_what_the_hook_reads(self):
+        # ifupdown has no SLAAC method of its own: auto is dhcp to the hook
+        for declared, exported in (("auto", "dhcp"), ("dhcp", "dhcp"),
+                                   ("manual", "manual")):
+            with self.subTest(method=declared):
+                self.assertEqual(
+                    self.file_managed("none", declared),
+                    {"IP6_CONFIG": exported},
+                )
+
+    def test_static_ipv6_exports_its_variables(self):
+        exported = env(
+            "version: 1\n"
+            "network:\n"
+            "  managed_by: file\n"
+            "  interfaces:\n"
+            "    eth0:\n"
+            "      ipv6:\n"
+            "        method: static\n"
+            "        address: 2001:db8:1::10/64\n"
+            "        gateway: fe80::1\n"
+        )
+        self.assertEqual(
+            exported,
+            {
+                "IP6_CONFIG": "static",
+                # the prefix length stays: an inet6 stanza has no netmask
+                "IP6_ADDRESS": "2001:db8:1::10/64",
+                "IP6_GW": "fe80::1",
+            },
+        )
+
+    def test_static_ipv6_with_slaac_off_exports_the_flag(self):
+        exported = env(
+            "version: 1\n"
+            "network:\n"
+            "  managed_by: file\n"
+            "  interfaces:\n"
+            "    eth0:\n"
+            "      ipv6:\n"
+            "        method: static\n"
+            "        address: 2001:db8:1::10/64\n"
+            "        slaac: false\n"
+        )
+        self.assertEqual(exported["IP6_SLAAC"], "no")
+        self.assertNotIn("IP6_GW", exported)
+
+    def test_dual_static_exports_both_families(self):
+        exported = env(
+            "version: 1\n"
+            "network:\n"
+            "  managed_by: file\n"
+            "  interfaces:\n"
+            "    eth0:\n"
+            "      ipv4:\n"
+            "        method: static\n"
+            "        address: 192.0.2.10/24\n"
+            "        gateway: 192.0.2.1\n"
+            "      ipv6:\n"
+            "        method: static\n"
+            "        address: 2001:db8:1::10/64\n"
+            "        gateway: fe80::1\n"
+        )
+        self.assertEqual(
+            exported,
+            {
+                "IP_CONFIG": "static",
+                "IP_ADDRESS": "192.0.2.10",
+                "IP_NETMASK": "255.255.255.0",
+                "IP_GW": "192.0.2.1",
+                "IP6_CONFIG": "static",
+                "IP6_ADDRESS": "2001:db8:1::10/64",
+                "IP6_GW": "fe80::1",
+            },
+        )
+
+    def test_the_last_ipv6_block_wins_as_a_whole(self):
+        exported = env(
+            "version: 1\n"
+            "network:\n"
+            "  managed_by: file\n"
+            "  interfaces:\n"
+            "    eth0:\n"
+            "      ipv6:\n"
+            "        method: static\n"
+            "        address: 2001:db8:1::10/64\n"
+            "    eth1:\n"
+            "      ipv6:\n"
+            "        method: auto\n"
+        )
+        # a whole block replaces the earlier one: no address next to the
+        # other interface's method
+        self.assertEqual(exported, {"IP6_CONFIG": "dhcp"})
 
     def test_interface_without_families_exports_nothing(self):
         exported = env(
@@ -77,6 +181,64 @@ class TestNetworkMapping(unittest.TestCase):
             "    eth0:\n"
         )
         self.assertEqual(exported, {})
+
+
+class TestNameserverPlacement(unittest.TestCase):
+    """The keel#45 rule, ported with the renderer (inithooks#21)"""
+
+    def env_with(self, ipv4: str, ipv6: str, nameservers: str) -> dict:
+        return env(
+            "version: 1\n"
+            "network:\n"
+            "  managed_by: file\n"
+            f"  nameservers: {nameservers}\n"
+            "  interfaces:\n"
+            "    eth0:\n"
+            "      ipv4:\n"
+            f"        method: {ipv4}\n"
+            "        address: 192.0.2.10/24\n"
+            "      ipv6:\n"
+            f"        method: {ipv6}\n"
+            "        address: 2001:db8:1::10/64\n"
+        )
+
+    def test_only_ipv6_static_carries_one_resolver_of_each_family(self):
+        exported = self.env_with(
+            "dhcp", "static",
+            "[2001:db8:1::53, 192.0.2.53, 2001:db8:2::53]",
+        )
+        self.assertEqual(exported["IP6_DNS1"], "2001:db8:1::53")
+        self.assertEqual(exported["IP6_DNS2"], "192.0.2.53")
+        self.assertNotIn("IP_DNS1", exported)
+
+    def test_only_ipv4_static_carries_one_resolver_of_each_family(self):
+        exported = self.env_with(
+            "static", "auto",
+            "[2001:db8:1::53, 2001:db8:2::53, 192.0.2.53]",
+        )
+        self.assertEqual(exported["IP_DNS1"], "2001:db8:1::53")
+        self.assertEqual(exported["IP_DNS2"], "192.0.2.53")
+        self.assertNotIn("IP6_DNS1", exported)
+
+    def test_both_static_split_the_servers_by_family(self):
+        exported = self.env_with(
+            "static", "static",
+            "[192.0.2.53, 2001:db8:1::53, 192.0.2.54, 2001:db8:2::53]",
+        )
+        self.assertEqual(exported["IP_DNS1"], "192.0.2.53")
+        self.assertEqual(exported["IP_DNS2"], "192.0.2.54")
+        self.assertEqual(exported["IP6_DNS1"], "2001:db8:1::53")
+        self.assertEqual(exported["IP6_DNS2"], "2001:db8:2::53")
+
+    def test_neither_static_exports_each_family_to_its_own_variables(self):
+        # the hook only writes dns-nameservers into a static stanza, so
+        # these reach the conf but not the interfaces file; keel renders
+        # the same variables (parity, inithooks#21)
+        exported = self.env_with(
+            "dhcp", "auto", "[192.0.2.53, 2001:db8:1::53]"
+        )
+        self.assertEqual(exported["IP_DNS1"], "192.0.2.53")
+        self.assertEqual(exported["IP6_DNS1"], "2001:db8:1::53")
 
 
 class TestNetworkErrors(unittest.TestCase):

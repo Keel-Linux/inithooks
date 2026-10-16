@@ -1,0 +1,17 @@
+version: 1
+instance:
+  hostname: core
+network:
+  managed_by: file
+  nameservers:
+    - 2001:db8:1::53
+    - 192.0.2.53
+  interfaces:
+    eth0:
+      ipv4:
+        method: dhcp
+      ipv6:
+        method: static
+        address: 2001:db8:1::10/64
+        gateway: fe80::1
+        slaac: false

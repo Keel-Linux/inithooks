@@ -22,6 +22,7 @@ FIXTURES = join(dirname(abspath(__file__)), "fixtures", "specs")
 CASES = {
     "valid_full.yaml": (True, True, ()),
     "issue31.yaml": (True, True, ()),
+    "issue21.yaml": (True, True, ()),
     "invalid_rendered_key.yaml": (
         False,
         False,

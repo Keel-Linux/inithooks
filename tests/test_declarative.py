@@ -308,8 +308,9 @@ class TestNetwork(unittest.TestCase):
         self.assertEqual(exported["IP_DNS1"], "192.0.2.53")
         self.assertEqual(exported["IP_DNS2"], "192.0.2.54")
 
-    def test_file_managed_static_ipv6_is_refused_in_this_version(self):
-        found = errors(
+    def test_file_managed_static_ipv6_is_accepted_and_exported(self):
+        """inithooks#21: the same document keel accepts and renders"""
+        text = (
             "version: 1\n"
             "network:\n"
             "  managed_by: file\n"
@@ -319,7 +320,10 @@ class TestNetwork(unittest.TestCase):
             "        method: static\n"
             "        address: 2001:db8:1::10/64\n"
         )
-        self.assertTrue(found)
+        self.assertEqual(errors(text), [])
+        exported = env(text)
+        self.assertEqual(exported["IP6_CONFIG"], "static")
+        self.assertEqual(exported["IP6_ADDRESS"], "2001:db8:1::10/64")
 
     def test_rejects_unknown_managed_by(self):
         self.assertTrue(errors("version: 1\nnetwork:\n  managed_by: magic\n"))
