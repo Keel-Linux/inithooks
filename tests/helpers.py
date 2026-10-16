@@ -4,11 +4,42 @@
 import os
 import sys
 import tempfile
-from os.path import abspath, dirname, join
+from os.path import abspath, dirname, exists, join
 
 sys.path.insert(0, dirname(dirname(abspath(__file__))))
 
 from libinithooks import declarative
+
+
+def keel_checkout():
+    """The path of a keel checkout, or None when there is none at hand
+
+    Point KEEL_SRC at a keel checkout, or keep one beside this repository.
+    """
+    checkout = os.environ.get("KEEL_SRC") or join(
+        dirname(dirname(dirname(abspath(__file__)))), "keel"
+    )
+    if not exists(join(checkout, "keel", "spec", "validate.py")):
+        return None
+    return checkout
+
+
+def keel_validate():
+    """keel's own validate(), or None when its source is not at hand
+
+    Used by the tests that hold this reader and keel together; they skip
+    when it is not there, so the suite runs with or without keel.
+    """
+    checkout = keel_checkout()
+    if checkout is None:
+        return None
+    if checkout not in sys.path:
+        sys.path.insert(0, checkout)
+    try:
+        from keel.spec.validate import validate
+    except ImportError:
+        return None
+    return validate
 
 
 def doc(text: str) -> dict:

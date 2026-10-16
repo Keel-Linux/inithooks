@@ -1,0 +1,4 @@
+# An unknown key inside a rendered section: both readers reject it.
+version: 1
+instance:
+  colour: blue

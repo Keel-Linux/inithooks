@@ -1,0 +1,79 @@
+# A description using every rendered section and every section keel gained
+# (appliance, installation, overlays, monitor, users, locale, database and
+# firewall). Valid to keel's validator and to this reader's fallback.
+version: 1
+
+instance:
+  hostname: core
+  fqdn: core.example.org
+
+network:
+  managed_by: host
+  interfaces:
+    eth0:
+      ipv4:
+        method: dhcp
+      ipv6:
+        method: dhcp
+
+tls:
+  acme:
+    enabled: false
+
+secrets:
+  db_password:
+    generate: true
+
+app:
+  email: admin@example.org
+  domain: core.example.org
+  options:
+    ip_bind: "[::1]"
+
+hub:
+  api_key: skip
+
+security:
+  alerts: admin@example.org
+  updates_at_first_boot: force
+
+first_login_wizard: false
+
+preseed:
+  AUTOGROW: ONCE
+
+users:
+  deploy:
+    shell: /bin/bash
+    groups: [sudo]
+
+locale:
+  timezone: Etc/UTC
+  lang: en_US.UTF-8
+
+database:
+  server:
+    engine: mariadb
+    role: standalone
+    listen:
+      - 127.0.0.1
+
+appliance:
+  name: core
+
+installation:
+  mode: simple
+
+overlays:
+  installer: enabled
+  wireguard: disabled
+  etcd: disabled
+  crowdsec: disabled
+
+monitor:
+  enabled: true
+  notify:
+    email: true
+
+firewall:
+  enabled: false

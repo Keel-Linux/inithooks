@@ -66,6 +66,17 @@ class TestLoad(unittest.TestCase):
         with self.assertRaises(declarative.DeclarativeError):
             doc("version: 1\ninstance: [unclosed\n")
 
+    def test_rejects_a_file_that_is_not_utf8(self):
+        with tempfile.NamedTemporaryFile(delete=False) as fob:
+            fob.write(b"\xff\xfe\x00\x01")
+            path = fob.name
+        try:
+            with self.assertRaises(declarative.DeclarativeError) as raised:
+                declarative.load(path)
+            self.assertIn("UTF-8", str(raised.exception))
+        finally:
+            os.remove(path)
+
     def test_rejects_document_that_is_not_a_mapping(self):
         with self.assertRaises(declarative.DeclarativeError):
             doc("- one\n- two\n")
@@ -74,9 +85,10 @@ class TestLoad(unittest.TestCase):
         self.assertTrue(errors("instance:\n  hostname: blog\n"))
         self.assertTrue(errors("version: 2\n"))
 
-    def test_rejects_unknown_top_level_key(self):
-        found = errors("version: 1\nnonsense: true\n")
-        self.assertTrue(any("nonsense" in error for error in found))
+    def test_a_section_this_reader_does_not_render_is_accepted(self):
+        # keel owns the whole vocabulary; a section this reader does not
+        # render is not its to refuse (inithooks#31)
+        self.assertEqual(errors("version: 1\nnonsense: true\n"), [])
 
 
 class TestMapping(unittest.TestCase):

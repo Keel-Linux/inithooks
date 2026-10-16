@@ -14,14 +14,12 @@ the comparison; without it the frozen table still fails a rename that is not
 recorded.
 """
 
-import os
 import sys
 import types
 import unittest
-from os.path import abspath, dirname, exists, join
 from unittest import mock
 
-from helpers import declarative, doc
+from helpers import declarative, doc, keel_validate
 
 # section -> the fields this version accepts, current names only
 VOCABULARY = {
@@ -68,22 +66,6 @@ first_login_wizard: false
 DEPRECATED = FULL.replace("updates_at_first_boot: force", "updates: force")
 
 
-def keel_validate():
-    """The other reader's validate(), or None when its source is not here"""
-    checkout = os.environ.get("KEEL_SRC") or join(
-        dirname(dirname(dirname(abspath(__file__)))), "keel"
-    )
-    if not exists(join(checkout, "keel", "spec", "validate.py")):
-        return None
-    if checkout not in sys.path:
-        sys.path.insert(0, checkout)
-    try:
-        from keel.spec.validate import validate
-    except ImportError:
-        return None
-    return validate
-
-
 class TestFrozenVocabulary(unittest.TestCase):
     def test_each_section_accepts_exactly_the_fields_recorded_here(self):
         for section, fields in VOCABULARY.items():
@@ -108,6 +90,26 @@ class TestFrozenVocabulary(unittest.TestCase):
 
     def test_the_full_document_is_valid(self):
         self.assertEqual(declarative._validate_local(doc(FULL)), [])
+
+    def test_a_section_this_reader_does_not_render_is_accepted(self):
+        # appliance, installation, overlays and monitor are keel's to
+        # check; the fallback validates only the sections it renders, so
+        # it does not refuse a section keel gained (inithooks#31)
+        text = (
+            "version: 1\n"
+            "appliance:\n  name: core\n"
+            "installation:\n  mode: simple\n"
+            "overlays:\n  etcd: disabled\n"
+            "monitor:\n  enabled: true\n"
+        )
+        self.assertEqual(declarative._validate_local(doc(text)), [])
+
+    def test_an_unknown_key_inside_a_rendered_section_is_still_an_error(self):
+        text = "version: 1\nsecurity:\n  firewall: on\n"
+        self.assertIn(
+            "security.firewall: unknown key",
+            declarative._validate_local(doc(text)),
+        )
 
 
 class TestRenames(unittest.TestCase):

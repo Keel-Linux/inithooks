@@ -136,13 +136,13 @@ class TestCheck(CLITestCase):
         self.assertEqual(code, 1)
         self.assertIn("Error:", err)
 
-    def test_every_validation_error_is_printed_with_the_path(self):
+    def test_a_section_this_reader_does_not_render_is_not_an_error(self):
         path = self.write_decl("version: 2\nnonsense: true\n")
         code, _, err = self.run_cli("--check", path)
         self.assertEqual(code, 1)
         self.assertIn(f"Error: {path}: version: must be 1\n", err)
-        self.assertIn(f"Error: {path}: nonsense: unknown top level key\n", err)
-        self.assertEqual(len(self.log.entries), 2)
+        self.assertNotIn("nonsense", err)
+        self.assertEqual(len(self.log.entries), 1)
 
     def test_log_that_cannot_be_written_falls_back_to_stderr(self):
         self.log = Log(fail=True)

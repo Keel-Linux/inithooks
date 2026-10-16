@@ -1,0 +1,5 @@
+# A top level section neither reader knows: keel rejects it, this reader's
+# fallback accepts it (a section it does not render is not its to refuse).
+version: 1
+nonsense:
+  a: 1

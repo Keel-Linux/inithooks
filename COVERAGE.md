@@ -11,14 +11,29 @@ The first boot accepts every spec section keel accepts (inithooks#31).
 `keel.spec.validate` when the keel package is installed and answers None
 otherwise, and `validate()` now asks it (over the canonical document) when
 it is there, falling back to `_validate_local()`, the renamed copy of the
-old validator. `tests/test_vocabulary.py` gains
-`TestValidationIsDelegatedToKeel` (a fake keel proves it is asked, its
-errors are returned, the four new sections pass and a deprecated name is
-canonical before keel sees it; a second test proves the copy answers when
-keel is absent), and the local-behaviour tests now call `_validate_local`
-directly, so a machine that happens to have keel installed does not change
-what they measure. `libinithooks/declarative.py` 100 percent, `bin/declarative.py`
-99 (the long-standing 119->108 branch miss). 547 pytest.
+old validator. The fallback no longer keeps a second copy of keel's key
+list: it validates the sections it renders (`RENDERED_SECTIONS`) and
+accepts every other top level section, since a section it does not act on
+is keel's to check; an unknown key inside a rendered section is still an
+error. `load()` also turns a description that is not UTF-8 into a
+`DeclarativeError` instead of a traceback, found by the new fuzz test.
+
+The suite grows a differential corpus (`tests/test_spec_corpus.py`: the
+fixtures under `tests/fixtures/specs/`, including the exact #31
+description, run through both readers with the verdicts compared),
+seeded property tests (`tests/test_spec_properties.py`: canonical is
+idempotent and does not mutate, the verdict and the render are stable
+under it, a valid document stays valid when an unrendered section goes,
+and `load()` on random bytes only ever returns a mapping or raises
+`DeclarativeError`), keel end-to-end tests
+(`tests/test_declarative_keel.py`: the #31 spec writes the conf, a
+malformed `appliance` and an unknown top-level key are refused) and
+`TestValidationIsDelegatedToKeel` in `tests/test_vocabulary.py`. The
+local-behaviour tests now call `_validate_local` directly, so a machine
+that happens to have keel installed does not change what they measure.
+`libinithooks/declarative.py` 100 percent, `bin/declarative.py` 99 (the
+long-standing 119->108 branch miss). 564 pytest with keel beside the
+checkout, 555 plus 9 keel-gated skips without it.
 
 ## Branch fix/secupdates-never-hold-boot: shell 99.71 (2026-10-03)
 

@@ -10,10 +10,16 @@ inithooks (2.3.6+keel27) trixie; urgency=medium
     libinithooks/declarative.py now asks keel's own validator
     (keel.spec.validate) when the keel package is installed, so the writer
     of the description and the hook that boots from it cannot drift apart.
-    Where keel is not installed the reader keeps its built-in copy of that
-    validation, because inithooks keeps no dependency on keel; the copy is
-    what an image without keel uses, and tests/test_vocabulary.py holds it
-    to the same vocabulary (inithooks#31).
+    The fallback for an image without keel no longer keeps a second copy of
+    keel's key list: it validates the sections it renders and leaves every
+    other top level section alone, because a section it does not act on is
+    keel's to check, and refusing one the tooling that wrote it accepts is
+    the bug this fixes. The suite grows a differential corpus of spec
+    fixtures (tests/test_spec_corpus.py), seeded property tests
+    (tests/test_spec_properties.py, which also found that a description
+    that is not UTF-8 crashed the reader with a traceback instead of a
+    DeclarativeError) and keel end-to-end tests (tests/test_declarative_keel.py);
+    a "keel" CI job checks keel out and runs them (inithooks#31).
 
  -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Thu, 15 Oct 2026 23:30:00 +0000
 

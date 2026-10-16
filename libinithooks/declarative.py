@@ -55,21 +55,23 @@ RENAME_REASONS = {
     " updates; the appliance keeps them current either way",
 }
 
-# The fallback's copy of the top level keys, read only when keel is not
-# installed (validate() below). keel's own table is the live one, so a
-# description carrying a section keel gained is accepted whenever keel is
-# there; an image without keel has nothing that acts on those sections
-# anyway. tests/test_vocabulary.py keeps this copy in step with keel's.
-TOP_LEVEL_KEYS = (
-    "version",
+# The top level sections this reader renders (validate() below validates
+# each of them). A section outside this tuple is not an error: keel's own
+# validator owns the whole vocabulary and is asked whenever keel is
+# installed, and an image without keel has nothing that acts on a section
+# this reader does not know, so rejecting it would only refuse a
+# description the tooling that wrote it accepts (inithooks#31). The
+# fallback below therefore checks these sections and leaves the rest
+# alone, rather than keeping a second, drifting copy of keel's key list.
+RENDERED_SECTIONS = (
     "instance",
-    "network",
-    "tls",
     "secrets",
     "app",
     "hub",
     "security",
     "first_login_wizard",
+    "network",
+    "tls",
     "preseed",
 )
 SECRET_VARS = {
@@ -124,12 +126,19 @@ def resolve_path(
 
 
 def load(path: str) -> dict:
-    """Parse the declarative file, raise DeclarativeError if it cannot be"""
+    """Parse the declarative file, raise DeclarativeError if it cannot be
+
+    A file that is not text at all is a DeclarativeError like any other,
+    not a traceback out of the reader: the message says the bytes are not
+    UTF-8. test_spec_properties.py reaches this with random bytes.
+    """
     try:
         with open(path) as fob:
             doc = yaml.safe_load(fob)
     except OSError as e:
         raise DeclarativeError(f"{path}: {e}")
+    except UnicodeDecodeError as e:
+        raise DeclarativeError(f"{path}: not valid UTF-8: {e}")
     except yaml.YAMLError as e:
         raise DeclarativeError(f"{path}: not valid YAML: {e}")
 
@@ -222,15 +231,19 @@ def validate(doc: dict) -> list[str]:
 
 
 def _validate_local(doc: dict) -> list[str]:
-    """The copy of keel's validation, used when keel is not installed"""
+    """The copy of keel's validation, used when keel is not installed
+
+    It validates the sections this reader renders (RENDERED_SECTIONS) and
+    ignores every other top level section: keel gained appliance,
+    installation, overlays and monitor after this reader was written, and
+    a section this reader does not act on is keel's to check, not its to
+    refuse. An unknown key *inside* a rendered section is still an error.
+    """
     doc = canonical(doc)
     errors: list[str] = []
 
     if doc.get("version") != SCHEMA_VERSION:
         errors.append(f"version: must be {SCHEMA_VERSION}")
-    for key in doc:
-        if key not in TOP_LEVEL_KEYS:
-            errors.append(f"{key}: unknown top level key")
 
     errors.extend(_validate_instance(doc.get("instance")))
     errors.extend(_validate_secrets(doc))
