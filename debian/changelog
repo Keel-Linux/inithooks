@@ -1,3 +1,27 @@
+inithooks (2.3.6+keel32) trixie; urgency=medium
+
+  * A serial-only console is asked before it is named unattended. stty
+    answers 0 0 on a serial line whether an operator is at it or not, and
+    a slow serial line or a pct console over a slow link can miss the
+    probe window, so the heuristics of lib/console.sh called an operator
+    who was there unattended: the first boot installed the updates and
+    rebooted after a kernel change without asking (inithooks#40).
+    console_unattended now asks once before the verdict stands: press
+    Enter within CONSOLE_ASK_TIMEOUT seconds and somebody is there.
+    Only a bare Enter counts, because a wrong attended hangs the boot at
+    a question nobody is there for (inithooks#39) while a wrong
+    unattended only takes the headless path. When the console answered
+    0 0, the ask fills it with the conventional 24x80 that agetty sets
+    on a serial line (term-utils/agetty.c in util-linux), so the first
+    screen draws by it. The console is opened read-write (3<>), and the
+    prompt is written within CONSOLE_TIMEOUT so a full buffer cannot hold
+    the boot.
+
+  * A headless LXC first boot, where stty answers 0 0, now waits
+    CONSOLE_ASK_TIMEOUT (5 s) more. The boot time includes it.
+
+ -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Sat, 17 Oct 2026 12:00:00 +0000
+
 inithooks (2.3.6+keel31) trixie; urgency=medium
 
   * Address the review of !48. The keel CI job now runs on keel-container
