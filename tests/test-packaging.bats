@@ -126,6 +126,23 @@ packaged_scripts() {
     done
 }
 
+# The cluster of PostgreSQL is a template instance, postgresql@17-main.service.
+# Before=postgresql.service above does not order it. On a first boot the server
+# started while the snakeoil certificate did not exist, failed, and started
+# again after 35pgsqlpass had run: 35pgsqlpass and 36pgsqlverify failed
+# (keel-postgresql#20).
+@test "every postgresql@ instance starts after keel-host-keys.service" {
+    local dropin=$REPO/systemd/postgresql@.service.d/10-keel-host-keys.conf
+    [[ -f "$dropin" ]]
+    [[ "$(awk '/^\[/ { section = $0 } /^After=/ { print section ":" $0 }' "$dropin")" \
+        == "[Unit]:After=keel-host-keys.service" ]]
+}
+
+@test "the package installs the postgresql@ drop-in under /usr/lib/systemd/system" {
+    grep -Eq '^systemd/postgresql@\.service\.d/\*[[:space:]]+/usr/lib/systemd/system/postgresql@\.service\.d$' \
+        "$REPO/debian/inithooks.install"
+}
+
 # prepare_postinst: the packaged postinst, with every command it calls
 # stubbed, against a scratch hourly cron directory (CRON_HOURLY). The script
 # names /etc/cron.hourly literally; the copy run here has that one path
