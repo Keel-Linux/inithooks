@@ -1,4 +1,4 @@
-inithooks (2.3.6+keel30) trixie; urgency=medium
+inithooks (2.3.6+keel31) trixie; urgency=medium
 
   * Address the review of !48. The keel CI job now runs on keel-container
     (the host runners refuse a fork job since #49), checks keel out to
@@ -19,7 +19,7 @@ inithooks (2.3.6+keel30) trixie; urgency=medium
 
  -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Fri, 16 Oct 2026 05:10:00 +0000
 
-inithooks (2.3.6+keel29) trixie; urgency=medium
+inithooks (2.3.6+keel30) trixie; urgency=medium
 
   * Harden the declarative reader's file handling the way privileged
     bootstrap tooling is hardened elsewhere (CWE-59, CWE-367). A secret
@@ -43,7 +43,7 @@ inithooks (2.3.6+keel29) trixie; urgency=medium
 
  -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Fri, 16 Oct 2026 04:25:00 +0000
 
-inithooks (2.3.6+keel28) trixie; urgency=medium
+inithooks (2.3.6+keel29) trixie; urgency=medium
 
   * 00declarative writes a static IPv6 address at first boot, the same one
     keel writes (inithooks#21). The first-boot reader refused
@@ -63,7 +63,7 @@ inithooks (2.3.6+keel28) trixie; urgency=medium
 
  -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Fri, 16 Oct 2026 03:52:20 +0000
 
-inithooks (2.3.6+keel27) trixie; urgency=medium
+inithooks (2.3.6+keel28) trixie; urgency=medium
 
   * The declarative first boot accepts every spec section keel accepts.
     keel 0.13.0 added the appliance, installation and overlays sections
@@ -94,6 +94,18 @@ inithooks (2.3.6+keel27) trixie; urgency=medium
     accept-and-skip is visible rather than silent.
 
  -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Thu, 15 Oct 2026 23:30:00 +0000
+inithooks (2.3.6+keel27) trixie; urgency=medium
+
+  * Every postgresql@ instance starts after keel-host-keys.service. On a
+    first boot the server started while the snakeoil certificate did not
+    exist yet. It failed to start, and it started again only after
+    35pgsqlpass had run. So 35pgsqlpass and 36pgsqlverify failed, and the
+    postgres role kept no password (keel-postgresql#20). The line
+    Before=postgresql.service in keel-host-keys.service does not order the
+    postgresql@ instance. A drop-in under
+    /usr/lib/systemd/system/postgresql@.service.d does.
+
+ -- Marcos Mendez <mendez.foto@gmail.com>  Sun, 18 Oct 2026 03:40:00 +0000
 
 inithooks (2.3.6+keel26) trixie; urgency=medium
 
