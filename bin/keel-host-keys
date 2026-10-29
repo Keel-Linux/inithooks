@@ -120,11 +120,18 @@ snakeoil_pair() {
     log notice "generated the snakeoil key $SNAKEOIL_KEY"
 }
 
+pids=()
 for type in $SSH_KEY_TYPES; do
-    ssh_key "$type"
+    ( ssh_key "$type"; exit "$failed" ) &
+    pids+=($!)
 done
-tls_pair
-snakeoil_pair
+( tls_pair; exit "$failed" ) &
+pids+=($!)
+( snakeoil_pair; exit "$failed" ) &
+pids+=($!)
+for pid in "${pids[@]}"; do
+    wait "$pid" || failed=1
+done
 
 # without the list, what was missing is generated but a shared key already
 # in place cannot be recognised, which must not look like success
