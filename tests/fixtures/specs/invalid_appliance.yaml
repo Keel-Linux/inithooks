@@ -1,0 +1,4 @@
+# A malformed section keel gained: keel rejects it, the fallback ignores it.
+version: 1
+appliance:
+  name: Core Example

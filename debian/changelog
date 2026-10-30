@@ -1,3 +1,99 @@
+inithooks (2.3.6+keel31) trixie; urgency=medium
+
+  * Address the review of !48. The keel CI job now runs on keel-container
+    (the host runners refuse a fork job since #49), checks keel out to
+    .keel-src rather than keel/ (with PYTHONPATH=. a workspace directory
+    named keel is imported as the package itself, so the parity tests
+    failed in setUp and everything else skipped), and pins ref to a SHA
+    so a keel change cannot pass or fail the suite without a change here.
+    The .github/workflows/tests.yml half of the job is gone again:
+    GitHub is a read-only mirror with no keel runner. tests/helpers.py
+    gains keel_module(): when KEEL_SRC is set, a keel that fails to
+    import is an error, not a skip, so the keel job cannot go green
+    without the differential tests, and the render tests use the same
+    helper. keel_validator() is quiet only for a keel that is not there
+    at all (ModuleNotFoundError naming keel itself): a keel installed
+    but missing a dependency is broken and says so through the log. The
+    secret-file open reports e.strerror instead of calling every error
+    but ELOOP "not found".
+
+ -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Fri, 16 Oct 2026 05:10:00 +0000
+
+inithooks (2.3.6+keel30) trixie; urgency=medium
+
+  * Harden the declarative reader's file handling the way privileged
+    bootstrap tooling is hardened elsewhere (CWE-59, CWE-367). A secret
+    file was checked with stat() and read with open() as two steps on a
+    name: a process that can write the directory could swap the file in
+    between, and the reader, running as root at first boot, would have
+    handed the secret's content to the wrong document. The check now
+    happens on the opened descriptor in the same open that reads it:
+    O_NOFOLLOW refuses a symlink outright (with its own error message,
+    at validate time too), O_NONBLOCK keeps a FIFO parked in the path
+    from stalling the reader, and fstat verifies the regular-file check,
+    the 0600-or-stricter mode and the root ownership of the file
+    actually read. The conf write was truncating the target in place, so
+    a crash or kill mid-write left a half-written conf for the hooks to
+    source, and it followed a symlink swapped in at the conf path. It
+    now writes a private O_EXCL temporary in the same directory, fsyncs,
+    and renames over the target, which replaces a link instead of
+    following it and is atomic on the kernel's side, with each cleanup
+    step unable to mask the next. The description itself is read through
+    a 1 MiB cap.
+
+ -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Fri, 16 Oct 2026 04:25:00 +0000
+
+inithooks (2.3.6+keel29) trixie; urgency=medium
+
+  * 00declarative writes a static IPv6 address at first boot, the same one
+    keel writes (inithooks#21). The first-boot reader refused
+    network.interfaces.<if>.ipv6.method: static under managed_by: file
+    ("static addresses cannot be written to /etc/network/interfaces by
+    this version") and exported no IP6_* variables at all, while 01ipconfig
+    has read them all along and keel spec apply renders them; so a static
+    IPv6 address was missing until the first day-two converge, breaking
+    decision 0018. libinithooks/declarative.py now ports
+    keel.spec.render.network_env: the IPv6 block exports IP6_CONFIG (auto
+    and dhcp both render as dhcp, which is what ifupdown has), IP6_ADDRESS
+    with its prefix length, IP6_GW, IP6_SLAAC=no when the spec says
+    slaac: false, and the keel#45 nameserver placement, where a single
+    static family carries one resolver of each family. The stale refusal
+    is gone; a new parity test holds this port to keel's renderer over a
+    matrix of documents, run in the keel CI job.
+
+ -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Fri, 16 Oct 2026 03:52:20 +0000
+
+inithooks (2.3.6+keel28) trixie; urgency=medium
+
+  * The declarative first boot accepts every spec section keel accepts.
+    keel 0.13.0 added the appliance, installation and overlays sections
+    (0.10 added monitor), and 00declarative validated the description
+    against its own copy of the top level section list, which did not know
+    them: it exited 1 with "unknown top level key", /etc/inithooks.conf was
+    never written, and a headless boot of a Core image only worked when the
+    conf had been rendered beforehand, as keel-core's boot-test.sh does.
+    libinithooks/declarative.py now asks keel's own validator
+    (keel.spec.validate) when the keel package is installed, so the writer
+    of the description and the hook that boots from it cannot drift apart.
+    The fallback for an image without keel no longer keeps a second copy of
+    keel's key list: it validates the sections it renders and leaves every
+    other top level section alone, because a section it does not act on is
+    keel's to check, and refusing one the tooling that wrote it accepts is
+    the bug this fixes. The suite grows a differential corpus of spec
+    fixtures (tests/test_spec_corpus.py), seeded property tests
+    (tests/test_spec_properties.py, which also found that a description
+    that is not UTF-8 crashed the reader with a traceback instead of a
+    DeclarativeError) and keel end-to-end tests (tests/test_declarative_keel.py);
+    a "keel" CI job checks keel out and runs them (inithooks#31).
+    keel is asked, not required: a keel that is installed but cannot be
+    imported, or whose validator raises, is logged and stepped over, with
+    the built-in copy answering instead, because the conf phase is not
+    something the boot depends on and a broken optional validator must not
+    fail a headless boot. unrendered_sections() and a line in the inithooks
+    log name the top level sections this reader leaves to keel, so the
+    accept-and-skip is visible rather than silent.
+
+ -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Thu, 15 Oct 2026 23:30:00 +0000
 inithooks (2.3.6+keel27) trixie; urgency=medium
 
   * Every postgresql@ instance starts after keel-host-keys.service. On a

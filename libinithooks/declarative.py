@@ -10,10 +10,12 @@ file format can be changed without touching anything else here.
 """
 
 import ipaddress
+import errno
 import os
 import re
 import secrets as secrets_module
 import shlex
+import stat as statlib
 import subprocess
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -55,16 +57,23 @@ RENAME_REASONS = {
     " updates; the appliance keeps them current either way",
 }
 
-TOP_LEVEL_KEYS = (
-    "version",
+# The top level sections this reader renders (validate() below validates
+# each of them). A section outside this tuple is not an error: keel's own
+# validator owns the whole vocabulary and is asked whenever keel is
+# installed, and an image without keel has nothing that acts on a section
+# this reader does not know, so rejecting it would only refuse a
+# description the tooling that wrote it accepts (inithooks#31). The
+# fallback below therefore checks these sections and leaves the rest
+# alone, rather than keeping a second, drifting copy of keel's key list.
+RENDERED_SECTIONS = (
     "instance",
-    "network",
-    "tls",
     "secrets",
     "app",
     "hub",
     "security",
     "first_login_wizard",
+    "network",
+    "tls",
     "preseed",
 )
 SECRET_VARS = {
@@ -118,13 +127,33 @@ def resolve_path(
     return found[0], found[1:]
 
 
+MAX_DESCRIPTION_BYTES = 1024 * 1024
+
+
 def load(path: str) -> dict:
-    """Parse the declarative file, raise DeclarativeError if it cannot be"""
+    """Parse the declarative file, raise DeclarativeError if it cannot be
+
+    A file that is not text at all is a DeclarativeError like any other,
+    not a traceback out of the reader: the message says the bytes are not
+    UTF-8. test_spec_properties.py reaches this with random bytes. The
+    file is read through a size cap first: the description is a few
+    hundred bytes in practice, and a reader that runs as root at first
+    boot must not hold an unbounded buffer for a path it does not control
+    (the cap cloud-init-style user data answers with too).
+    """
     try:
-        with open(path) as fob:
-            doc = yaml.safe_load(fob)
+        with open(path, "rb") as fob:
+            data = fob.read(MAX_DESCRIPTION_BYTES + 1)
     except OSError as e:
         raise DeclarativeError(f"{path}: {e}")
+    if len(data) > MAX_DESCRIPTION_BYTES:
+        raise DeclarativeError(
+            f"{path}: larger than {MAX_DESCRIPTION_BYTES} bytes"
+        )
+    try:
+        doc = yaml.safe_load(data.decode())
+    except UnicodeDecodeError as e:
+        raise DeclarativeError(f"{path}: not valid UTF-8: {e}")
     except yaml.YAMLError as e:
         raise DeclarativeError(f"{path}: not valid YAML: {e}")
 
@@ -180,20 +209,106 @@ def canonical(doc: Any) -> Any:
     return result
 
 
-def validate(doc: dict) -> list[str]:
+def keel_validator(
+    log: Callable[[str], None] | None = None,
+) -> Callable[..., list[str]] | None:
+    """keel's own validator, or None when keel is not usable here
+
+    keel is the writer of the instance description and the reader that
+    acts on it after the first boot, so its validator is the one that
+    decides what a description may say. Asking it means the first boot
+    accepts every section and field keel accepts, and the two readers
+    cannot drift: a section keel gained that this reader did not know
+    used to make 00declarative exit 1 and leave /etc/inithooks.conf
+    unwritten, so a headless boot only worked if the conf was rendered
+    beforehand. keel is deliberately not a dependency, so an image that
+    does not carry it answers None and validate() falls back to the copy
+    in _validate_local. A keel that is installed but cannot be imported
+    is the same answer, and says so through `log` rather than bricking a
+    boot the built-in copy can still validate; the strict check for an
+    operator is `keel spec validate` offline. The quiet case is only a
+    keel that is not there at all (ModuleNotFoundError naming keel
+    itself): a keel that is installed but misses one of its own
+    dependencies is broken, not absent, and says so.
+    """
+    try:
+        from keel.spec.validate import validate as keel_validate
+    except ModuleNotFoundError as e:
+        if e.name and e.name != "keel" and not e.name.startswith("keel."):
+            if log is not None:
+                log(
+                    f"keel is installed but its validator did not import"
+                    f" (missing {e.name}); using the built-in copy"
+                )
+        return None
+    except Exception as e:  # a keel that is present but broken, not absent
+        if log is not None:
+            log(
+                f"keel is installed but its validator did not import ({e});"
+                " using the built-in copy"
+            )
+        return None
+    return keel_validate
+
+
+def validate(
+    doc: dict, log: Callable[[str], None] | None = None
+) -> list[str]:
     """Return a list of error messages, empty when the document is valid
 
-    A deprecated field name is read under its current name, so a description
-    written before a rename gets the real errors rather than "unknown key".
+    keel's validator is asked when keel is installed, so the first boot
+    accepts what keel accepts; the copy in _validate_local answers where
+    keel is not installed, or where its validator raises. Either way a
+    deprecated field name is read under its current name, so a description
+    written before a rename gets the real errors rather than "unknown
+    key". The reader is the conf phase, which the boot does not depend on,
+    so a keel that fails is logged and stepped over rather than failing
+    the first boot (the same stop-not-abort policy as keel's own
+    10keel-system).
+    """
+    keel_validate = keel_validator(log)
+    if keel_validate is not None:
+        try:
+            return list(keel_validate(canonical(doc)))
+        except Exception as e:
+            if log is not None:
+                log(
+                    f"keel's validator failed ({e}); using the built-in"
+                    " copy"
+                )
+    return _validate_local(doc)
+
+
+def unrendered_sections(doc: Any) -> list[str]:
+    """Top level sections this reader renders nothing from, in order
+
+    keel owns the whole vocabulary, so a section outside RENDERED_SECTIONS
+    is not an error; naming them lets the caller log what it leaves to
+    keel instead of accepting them in silence.
+    """
+    if not isinstance(doc, dict):
+        return []
+    return [
+        key
+        for key in doc
+        if key not in RENDERED_SECTIONS and key != "version"
+    ]
+
+
+def _validate_local(doc: dict) -> list[str]:
+    """The copy of keel's validation, used when keel is not installed
+
+    It validates the sections this reader renders (RENDERED_SECTIONS) and
+    ignores every other top level section: keel gained appliance,
+    installation, overlays and monitor after this reader was written, and
+    a section this reader does not act on is keel's to check, not its to
+    refuse. An unknown key *inside* a rendered section is still an error.
     """
     doc = canonical(doc)
     errors: list[str] = []
 
     if doc.get("version") != SCHEMA_VERSION:
         errors.append(f"version: must be {SCHEMA_VERSION}")
-    for key in doc:
-        if key not in TOP_LEVEL_KEYS:
-            errors.append(f"{key}: unknown top level key")
 
     errors.extend(_validate_instance(doc.get("instance")))
     errors.extend(_validate_secrets(doc))
@@ -290,11 +405,41 @@ def mask(text: str) -> str:
 
 
 def write_conf(text: str, path: str) -> None:
-    """Write the rendered conf, readable by root only"""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fob:
-        fob.write(text)
-    os.chmod(path, 0o600)
+    """Write the rendered conf atomically, readable by root only
+
+    The hooks source the conf at first boot, so a crash or a kill mid-way
+    must never leave a half-written file for them to source: the text is
+    written to a private temporary file in the same directory, fsync'ed,
+    and renamed over the target, which the kernel makes atomic. rename
+    also replaces a symlink at the target instead of following it, so a
+    conf path swapped for a link cannot redirect the root-owned write
+    (CWE-367, CWE-59). The temporary is opened with O_EXCL: this writer
+    never follows or clobbers a pre-existing path it did not create.
+    """
+    tmp = f"{path}.tmp.{os.getpid()}"
+    fd = -1
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fob:
+            fd = -1
+            fob.write(text)
+            fob.flush()
+            os.fsync(fob.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    finally:
+        # each cleanup must not be able to mask the next: a close that
+        # fails (the descriptor already gone, say) must not keep the
+        # temporary file on disk
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def default_managed_by() -> str:
@@ -385,67 +530,211 @@ def _managed_by(network: dict) -> str:
     return str(network.get("managed_by") or default_managed_by())
 
 
-def _network_env(network: Any) -> dict[str, str]:
-    """Map the network section onto the IP_* variables 01ipconfig reads
+MAX_NAMESERVERS = 2
+# ifupdown has no SLAAC method of its own: `inet6 dhcp` is what the hook
+# writes for both, and it keeps SLAAC on as confconsole does (Keel-Linux
+# keel.spec.render).
+IP6_CONFIG = {"static": "static", "dhcp": "dhcp", "auto": "dhcp",
+              "manual": "manual"}
 
+
+def _network_env(network: Any) -> dict[str, str]:
+    """Map the network section onto the IP_* and IP6_* variables 01ipconfig
+    reads
+
+    A port of keel.spec.render.network_env (inithooks#21): the two readers
+    render the same file for the same spec, so a static IPv6 address the
+    first boot writes is the one a day-two `keel spec apply` would write.
     Only the file managed case exports anything: when the host owns the
-    interface configuration there is nothing for 01ipconfig to write.
+    interface configuration there is nothing for 01ipconfig to write. The
+    IP6_* variables only appear when an interface declares an ipv6 block,
+    so a spec without one renders the same conf it always did.
+
+    The hook configures one interface. When the spec declares several, the
+    last ipv6 block wins as a whole, so an address is never exported next
+    to another interface's method. The nameservers are placed by
+    _nameserver_env, the keel#45 rule.
     """
     env: dict[str, str] = {}
     if not isinstance(network, dict) or _managed_by(network) != "file":
         return env
 
     interfaces = network.get("interfaces") or {}
+    nameservers = [str(server) for server in network.get("nameservers") or []]
+    ipv4_env: dict[str, str] = {}
     for iface in interfaces.values():
-        ipv4 = (iface or {}).get("ipv4") or {}
-        method = str(ipv4.get("method") or "none")
-        if method == "none":
-            continue
-        env["IP_CONFIG"] = method
-        if method != "static":
-            continue
-        address = ipaddress.ip_interface(str(ipv4["address"]))
-        env["IP_ADDRESS"] = str(address.ip)
-        env["IP_NETMASK"] = str(address.netmask)
-        _set(env, "IP_GW", ipv4.get("gateway"))
-
-    nameservers = [
-        str(server)
-        for server in (network.get("nameservers") or [])
-        if _is_ipv4(str(server))
-    ]
-    for index, server in enumerate(nameservers[:2], start=1):
-        env[f"IP_DNS{index}"] = server
+        ipv4_env.update(_ipv4_env((iface or {}).get("ipv4") or {}))
+    ipv6_env: dict[str, str] = {}
+    for iface in interfaces.values():
+        ipv6_env = _ipv6_env((iface or {}).get("ipv6") or {}) or ipv6_env
+    dns = _nameserver_env(nameservers, {**ipv4_env, **ipv6_env})
+    env.update(ipv4_env)
+    env.update(_prefixed(dns, "IP_DNS"))
+    env.update(ipv6_env)
+    env.update(_prefixed(dns, "IP6_DNS"))
     return env
 
 
+def _ipv4_env(ipv4: dict) -> dict[str, str]:
+    method = str(ipv4.get("method") or "none")
+    if method == "none":
+        return {}
+    env = {"IP_CONFIG": method}
+    if method != "static":
+        return env
+    address = ipaddress.ip_interface(str(ipv4["address"]))
+    env["IP_ADDRESS"] = str(address.ip)
+    env["IP_NETMASK"] = str(address.netmask)
+    _set(env, "IP_GW", ipv4.get("gateway"))
+    return env
+
+
+def _ipv6_env(ipv6: dict) -> dict[str, str]:
+    """IP6_ADDRESS keeps its prefix length: an inet6 stanza has no netmask
+
+    IP6_SLAAC is exported only to turn SLAAC off; the hook's default keeps
+    it, and a spec that does not say `slaac: false` renders as before.
+    """
+    method = str(ipv6.get("method") or "none")
+    if method == "none":
+        return {}
+    env = {"IP6_CONFIG": IP6_CONFIG[method]}
+    if method != "static":
+        return env
+    env["IP6_ADDRESS"] = str(ipaddress.ip_interface(str(ipv6["address"])))
+    _set(env, "IP6_GW", ipv6.get("gateway"))
+    if ipv6.get("slaac") is False:
+        env["IP6_SLAAC"] = "no"
+    return env
+
+
+def _nameserver_env(nameservers: list[str], env: dict[str, str]) -> (
+    dict[str, str]
+):
+    """The IP_DNS* and IP6_DNS* variables for the methods already in `env`
+
+    lib/ipconfig.sh writes dns-nameservers only in a static stanza, two at
+    most, and resolvconf takes them from any stanza whatever the server's
+    family. So when one family is static and the other is not, the static
+    stanza carries the declared servers of both families: a dynamic
+    family's servers are not dropped for being of the other family
+    (keel#45). Two are kept, the first of each family before a second of
+    either (one_of_each), so a broken upstream of one family still leaves
+    a resolver of the other; the static family's own second server can be
+    the one left out. When both are static, or neither, each family's
+    servers go to its own stanza, the first two of each; with neither
+    static, the file holds none of them.
+    """
+    ipv4_static = env.get("IP_CONFIG") == "static"
+    ipv6_static = env.get("IP6_CONFIG") == "static"
+    if ipv4_static and not ipv6_static:
+        return _dns_env("IP_DNS", _one_of_each(nameservers))
+    if ipv6_static and not ipv4_static:
+        return _dns_env("IP6_DNS", _one_of_each(nameservers))
+    dns = _dns_env("IP_DNS", filter(_is_ipv4, nameservers))
+    if "IP6_CONFIG" in env:
+        dns.update(_dns_env("IP6_DNS", filter(_is_ipv6, nameservers)))
+    return dns
+
+
+def _one_of_each(nameservers: list[str]) -> list[str]:
+    """The two servers one stanza keeps, in the spec's order
+
+    The first server of each family comes before a second of either, so
+    [2001:db8:1::53, 2001:db8:2::53, 192.0.2.53] keeps 2001:db8:1::53 and
+    192.0.2.53; a list of one family keeps its first two.
+    """
+    # a server declared twice must not displace the other family's
+    nameservers = list(dict.fromkeys(nameservers))
+    firsts: dict[bool, str] = {}
+    for server in nameservers:
+        firsts.setdefault(_is_ipv6(server), server)
+    kept = set(firsts.values())
+    for server in nameservers:
+        if len(kept) >= MAX_NAMESERVERS:
+            break
+        kept.add(server)
+    return [server for server in nameservers if server in kept]
+
+
+def _dns_env(prefix: str, servers: Any) -> dict[str, str]:
+    """The first two nameservers given, as PREFIX1 and PREFIX2"""
+    return {
+        f"{prefix}{index}": server
+        for index, server in enumerate(
+            list(servers)[:MAX_NAMESERVERS], start=1
+        )
+    }
+
+
+def _prefixed(env: dict[str, str], prefix: str) -> dict[str, str]:
+    """The variables PREFIX1 and PREFIX2 of `env`, without the others"""
+    return {
+        key: value for key, value in env.items()
+        if key[:-1] == prefix
+    }
+
+
 def _is_ipv4(value: str) -> bool:
+    return _ip_version(value) == 4
+
+
+def _is_ipv6(value: str) -> bool:
+    return _ip_version(value) == 6
+
+
+def _ip_version(value: str) -> int | None:
     try:
-        return ipaddress.ip_address(value).version == 4
+        return ipaddress.ip_address(value).version
     except ValueError:
-        return False
+        return None
 
 
 def _read_secret_file(path: str) -> str:
-    error = _secret_file_error(path)
-    if error:
-        raise DeclarativeError(error)
-    with open(path, "rb") as fob:
+    fd = _open_secret_file(path)
+    with os.fdopen(fd, "rb") as fob:
         data = fob.read()
     if data.endswith(b"\n"):
         data = data[:-1]
     return data.decode()
 
 
-def _secret_file_error(path: str) -> str | None:
-    if not os.path.isfile(path):
-        return f"{path}: secret file not found"
-    stat = os.stat(path)
-    if stat.st_mode & 0o077:
-        return f"{path}: secret file mode must be 0600 or stricter"
-    if stat.st_uid not in (0, os.geteuid()):
-        return f"{path}: secret file must be owned by root"
-    return None
+def _open_secret_file(path: str) -> int:
+    """Open a secret file descriptor, checked and used in one step
+
+    The check and the read must not be two steps on a name: a local
+    process that can write the directory could swap the file between the
+    stat and the open, and the reader, running as root at first boot,
+    would then hand the secret's content to the wrong document
+    (CWE-367). So the file is opened once, O_NOFOLLOW refuses a symlink
+    swapped in at the last component, O_NONBLOCK keeps a FIFO from
+    stalling the reader until a writer shows up, and the mode and owner
+    are read back from the opened descriptor with fstat, which describes
+    the file actually read, not the file that was there a moment ago.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise DeclarativeError(
+                f"{path}: secret file must not be a symlink"
+            )
+        raise DeclarativeError(
+            f"{path}: secret file not found: {e.strerror}"
+        )
+    st = os.fstat(fd)
+    if not statlib.S_ISREG(st.st_mode):
+        os.close(fd)
+        raise DeclarativeError(f"{path}: secret file is not a regular file")
+    if st.st_mode & 0o077:
+        os.close(fd)
+        raise DeclarativeError(
+            f"{path}: secret file mode must be 0600 or stricter"
+        )
+    if st.st_uid not in (0, os.geteuid()):
+        os.close(fd)
+        raise DeclarativeError(f"{path}: secret file must be owned by root")
+    return fd
 
 
 def _domain_error(key: str, value: Any) -> str | None:
@@ -512,6 +801,22 @@ def _validate_secrets(doc: dict) -> list[str]:
                 " nobody can log in with the generated value"
             )
     return errors
+
+
+def _secret_file_error(path: str) -> str | None:
+    """The validation-time view of a secret file's hygiene
+
+    Advisory only: the check that guards the read happens again on the
+    opened descriptor in _open_secret_file(), since validation and use
+    are separate moments (CWE-367). This exists so the error names the
+    field at validate time rather than failing the whole run later.
+    """
+    try:
+        fd = _open_secret_file(path)
+    except DeclarativeError as e:
+        return str(e)
+    os.close(fd)
+    return None
 
 
 def _validate_secret(key: str, spec: Any) -> list[str]:
@@ -632,15 +937,11 @@ def _validate_network(network: Any) -> list[str]:
     if error:
         return errors + [error]
     for name, iface in (interfaces or {}).items():
-        errors.extend(
-            _validate_interface(
-                f"network.interfaces.{name}", iface, str(managed_by or "")
-            )
-        )
+        errors.extend(_validate_interface(f"network.interfaces.{name}", iface))
     return errors
 
 
-def _validate_interface(key: str, iface: Any, managed_by: str) -> list[str]:
+def _validate_interface(key: str, iface: Any) -> list[str]:
     error = _mapping_error(key, iface)
     if error or not iface:
         return [error] if error else []
@@ -651,14 +952,6 @@ def _validate_interface(key: str, iface: Any, managed_by: str) -> list[str]:
             errors.append(f"{key}.{family}: unknown key")
     errors.extend(_validate_family(f"{key}.ipv4", iface.get("ipv4"), 4))
     errors.extend(_validate_family(f"{key}.ipv6", iface.get("ipv6"), 6))
-
-    ipv6 = iface.get("ipv6") or {}
-    if managed_by == "file" and ipv6.get("method") == "static":
-        errors.append(
-            f"{key}.ipv6: static addresses cannot be written to"
-            " /etc/network/interfaces by this version; use"
-            " network.managed_by: host and set the address on the host"
-        )
     return errors
 
 

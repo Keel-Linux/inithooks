@@ -36,7 +36,7 @@ def doc(text: str) -> dict:
 def env(text: str) -> dict:
     """Render a YAML document to a dict of exported variables"""
     document = doc(text)
-    errors = declarative.validate(document)
+    errors = declarative._validate_local(document)
     if errors:
         raise AssertionError(f"unexpected errors: {errors}")
     secrets = declarative.resolve_secrets(document)
@@ -51,7 +51,7 @@ def env(text: str) -> dict:
 
 
 def errors(text: str) -> list[str]:
-    return declarative.validate(doc(text))
+    return declarative._validate_local(doc(text))
 
 
 class TestLoad(unittest.TestCase):
@@ -66,6 +66,17 @@ class TestLoad(unittest.TestCase):
         with self.assertRaises(declarative.DeclarativeError):
             doc("version: 1\ninstance: [unclosed\n")
 
+    def test_rejects_a_file_that_is_not_utf8(self):
+        with tempfile.NamedTemporaryFile(delete=False) as fob:
+            fob.write(b"\xff\xfe\x00\x01")
+            path = fob.name
+        try:
+            with self.assertRaises(declarative.DeclarativeError) as raised:
+                declarative.load(path)
+            self.assertIn("UTF-8", str(raised.exception))
+        finally:
+            os.remove(path)
+
     def test_rejects_document_that_is_not_a_mapping(self):
         with self.assertRaises(declarative.DeclarativeError):
             doc("- one\n- two\n")
@@ -74,9 +85,10 @@ class TestLoad(unittest.TestCase):
         self.assertTrue(errors("instance:\n  hostname: blog\n"))
         self.assertTrue(errors("version: 2\n"))
 
-    def test_rejects_unknown_top_level_key(self):
-        found = errors("version: 1\nnonsense: true\n")
-        self.assertTrue(any("nonsense" in error for error in found))
+    def test_a_section_this_reader_does_not_render_is_accepted(self):
+        # keel owns the whole vocabulary; a section this reader does not
+        # render is not its to refuse (inithooks#31)
+        self.assertEqual(errors("version: 1\nnonsense: true\n"), [])
 
 
 class TestMapping(unittest.TestCase):
@@ -221,7 +233,7 @@ class TestSecrets(unittest.TestCase):
             "  app_password:\n"
             f"    file: {path}\n"
         )
-        self.assertEqual(declarative.validate(document), [])
+        self.assertEqual(declarative._validate_local(document), [])
         secrets = declarative.resolve_secrets(document)
         rendered = declarative.render_env(document, secrets)
 
@@ -296,8 +308,9 @@ class TestNetwork(unittest.TestCase):
         self.assertEqual(exported["IP_DNS1"], "192.0.2.53")
         self.assertEqual(exported["IP_DNS2"], "192.0.2.54")
 
-    def test_file_managed_static_ipv6_is_refused_in_this_version(self):
-        found = errors(
+    def test_file_managed_static_ipv6_is_accepted_and_exported(self):
+        """inithooks#21: the same document keel accepts and renders"""
+        text = (
             "version: 1\n"
             "network:\n"
             "  managed_by: file\n"
@@ -307,7 +320,10 @@ class TestNetwork(unittest.TestCase):
             "        method: static\n"
             "        address: 2001:db8:1::10/64\n"
         )
-        self.assertTrue(found)
+        self.assertEqual(errors(text), [])
+        exported = env(text)
+        self.assertEqual(exported["IP6_CONFIG"], "static")
+        self.assertEqual(exported["IP6_ADDRESS"], "2001:db8:1::10/64")
 
     def test_rejects_unknown_managed_by(self):
         self.assertTrue(errors("version: 1\nnetwork:\n  managed_by: magic\n"))

@@ -38,6 +38,32 @@ jobs:
       threshold: 95
       package: libinithooks,bin
       tests: tests
+  keel:
+    # Forgejo copy of the "keel" job of .github/workflows/tests.yml: fetch
+    # keel beside inithooks and run the suite with KEEL_SRC set, so the
+    # differential, property and end-to-end tests actually run. The
+    # checkout goes to .keel-src, not keel: with PYTHONPATH=. a directory
+    # named keel at the workspace root would be imported as the keel
+    # package itself (a namespace package) instead of keel/keel inside
+    # it. ref is pinned to a SHA so a keel change cannot pass or fail
+    # this suite without any change here.
+    runs-on: keel-container
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: Keel-Linux/keel
+          ref: 5f44f0e67b116f8f8c93585e1933b6715fbea4ee
+          path: .keel-src
+      - name: Python in a virtual environment
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Install test tools
+        run: python -m pip install --quiet pytest pyyaml
+      - name: Run the suite against keel
+        run: KEEL_SRC="$GITHUB_WORKSPACE/.keel-src" PYTHONPATH=. python -m pytest -q tests
   # A change that ships must come with a changelog entry, or it cannot be
   # installed and never reaches an appliance. The rule and its tests are
   # bin/require-changelog of the .github repository. The check is

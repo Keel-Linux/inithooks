@@ -1,0 +1,28 @@
+# The description of inithooks#31: a Core image whose spec carries the
+# sections keel 0.13.0 added. The first boot must accept it and write the
+# conf straight from it, with no conf rendered beforehand.
+version: 1
+
+instance:
+  hostname: core
+  fqdn: core.example.org
+
+security:
+  alerts: admin@example.org
+
+appliance:
+  name: core
+
+installation:
+  mode: simple
+
+overlays:
+  installer: enabled
+  wireguard: disabled
+  etcd: disabled
+  crowdsec: disabled
+
+monitor:
+  enabled: true
+  notify:
+    email: true

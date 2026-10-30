@@ -534,8 +534,29 @@ Keys and the variables they produce::
 
 Notes:
 
-    - version is required and must be 1. An unknown top level key is an
-      error; keys under app.options and preseed are not checked.
+    - version is required and must be 1. Keys under app.options and preseed
+      are not checked. A top level section this reader does not render
+      (appliance, installation, overlays, monitor, and whatever keel gains
+      later) is not an error: keel owns the whole vocabulary, and it is the
+      writer of the description and the reader that acts on it after the
+      first boot, so this reader leaves such a section to it. The names of
+      those sections are written once to the inithooks log, so the reader
+      does not pass them over in silence. An unknown key *inside* a section
+      this reader renders is still an error.
+    - The description is validated by the keel command's own validator when
+      the keel package is installed, so the first boot accepts every section
+      and field keel accepts, including the appliance, installation, overlays
+      and monitor sections this reader does not act on. An image that does not
+      carry keel falls back to a copy of that validation held inside
+      inithooks; the copy is deliberately not a dependency, and the two are
+      kept from drifting by tests/test_vocabulary.py and the differential
+      corpus of tests/test_spec_corpus.py. keel is asked, not required: a
+      first boot must not depend on it to render the conf, so if a keel that
+      is installed raises on import or in its validator, the error is logged
+      and the built-in copy answers instead (the strict check for an operator
+      is "keel spec validate" offline). This is why a spec the Core image's
+      tooling accepts boots as it is, without the conf having to be rendered
+      beforehand.
     - security.updates_at_first_boot controls one thing: whether 95secupdates
       installs the pending security updates during the first boot. The
       appliance keeps itself current either way, through cron-apt, so the
@@ -552,9 +573,19 @@ Notes:
 
     - A secret is a mapping with exactly one of file or generate. A secret
       file is read as bytes, one trailing newline is stripped, and it must
-      be mode 0600 or stricter and owned by root. generate is meant for
+      be mode 0600 or stricter and owned by root. The check is made on the
+      opened file descriptor, in the same open that reads it (O_NOFOLLOW,
+      O_NONBLOCK, fstat): a symlink is refused outright, and a file swapped
+      between a check and a read, or a FIFO parked in the path, cannot
+      stall or redirect the root-run reader. generate is meant for
       db_password: a generated value is never shown, so it is refused for
       root_password and app_password unless first_login_wizard is true.
+
+    - The conf is written atomically: a private temporary file in the same
+      directory, fsync'ed, renamed over the target (a rename replaces a
+      symlink instead of following it), so a crash, kill or swapped path
+      never leaves a half-written or redirected conf for the hooks to
+      source. The description itself is read through a 1 MiB cap.
 
     - Values are shell quoted, so a password containing spaces, quotes or a
       dollar sign survives being sourced.
@@ -563,9 +594,13 @@ Notes:
       writes the interface configuration) means the reader writes no
       addresses. It compares the declared addresses with the live ones and
       logs an error if they differ, without failing the run.
-      network.managed_by: file maps the IPv4 settings onto the IP_*
-      variables read by 01ipconfig; static IPv6 addresses cannot be written
-      to /etc/network/interfaces yet and are refused.
+      network.managed_by: file maps the network section onto the IP_* and
+      IP6_* variables read by 01ipconfig, exactly the variables keel's own
+      renderer exports for the same document (inithooks#21): a static IPv6
+      address is written to /etc/network/interfaces at first boot, with the
+      prefix length kept on IP6_ADDRESS, SLAAC kept unless the spec says
+      slaac: false, and nameservers placed by the keel#45 rule (a single
+      static family carries one resolver of each family).
 
     - tls.acme is accepted and validated (enabled, challenge, domains,
       agree_tos, as the instance tooling reads them), but no certificate is

@@ -14,12 +14,12 @@ the comparison; without it the frozen table still fails a rename that is not
 recorded.
 """
 
-import os
 import sys
+import types
 import unittest
-from os.path import abspath, dirname, exists, join
+from unittest import mock
 
-from helpers import declarative, doc
+from helpers import declarative, doc, keel_validate
 
 # section -> the fields this version accepts, current names only
 VOCABULARY = {
@@ -66,22 +66,6 @@ first_login_wizard: false
 DEPRECATED = FULL.replace("updates_at_first_boot: force", "updates: force")
 
 
-def keel_validate():
-    """The other reader's validate(), or None when its source is not here"""
-    checkout = os.environ.get("KEEL_SRC") or join(
-        dirname(dirname(dirname(abspath(__file__)))), "keel"
-    )
-    if not exists(join(checkout, "keel", "spec", "validate.py")):
-        return None
-    if checkout not in sys.path:
-        sys.path.insert(0, checkout)
-    try:
-        from keel.spec.validate import validate
-    except ImportError:
-        return None
-    return validate
-
-
 class TestFrozenVocabulary(unittest.TestCase):
     def test_each_section_accepts_exactly_the_fields_recorded_here(self):
         for section, fields in VOCABULARY.items():
@@ -90,7 +74,7 @@ class TestFrozenVocabulary(unittest.TestCase):
                 text = f"version: 1\n{section}:\n{body}\n"
                 unknown = [
                     error
-                    for error in declarative.validate(doc(text))
+                    for error in declarative._validate_local(doc(text))
                     if "unknown key" in error
                 ]
                 self.assertEqual(unknown, [])
@@ -101,16 +85,36 @@ class TestFrozenVocabulary(unittest.TestCase):
                 text = f"version: 1\n{section}:\n  not_a_field: x\n"
                 self.assertIn(
                     f"{section}.not_a_field: unknown key",
-                    declarative.validate(doc(text)),
+                    declarative._validate_local(doc(text)),
                 )
 
     def test_the_full_document_is_valid(self):
-        self.assertEqual(declarative.validate(doc(FULL)), [])
+        self.assertEqual(declarative._validate_local(doc(FULL)), [])
+
+    def test_a_section_this_reader_does_not_render_is_accepted(self):
+        # appliance, installation, overlays and monitor are keel's to
+        # check; the fallback validates only the sections it renders, so
+        # it does not refuse a section keel gained (inithooks#31)
+        text = (
+            "version: 1\n"
+            "appliance:\n  name: core\n"
+            "installation:\n  mode: simple\n"
+            "overlays:\n  etcd: disabled\n"
+            "monitor:\n  enabled: true\n"
+        )
+        self.assertEqual(declarative._validate_local(doc(text)), [])
+
+    def test_an_unknown_key_inside_a_rendered_section_is_still_an_error(self):
+        text = "version: 1\nsecurity:\n  firewall: on\n"
+        self.assertIn(
+            "security.firewall: unknown key",
+            declarative._validate_local(doc(text)),
+        )
 
 
 class TestRenames(unittest.TestCase):
     def test_a_deprecated_name_is_still_read(self):
-        self.assertEqual(declarative.validate(doc(DEPRECATED)), [])
+        self.assertEqual(declarative._validate_local(doc(DEPRECATED)), [])
 
     def test_a_deprecated_name_is_reported_with_its_replacement(self):
         messages = declarative.deprecations(doc(DEPRECATED))
@@ -164,16 +168,189 @@ class TestBothReadersAgree(unittest.TestCase):
 
     def test_the_full_document_is_valid_to_both(self):
         self.assertEqual(self.validate(doc(FULL)), [])
-        self.assertEqual(declarative.validate(doc(FULL)), [])
+        self.assertEqual(declarative._validate_local(doc(FULL)), [])
 
     def test_the_deprecated_name_is_read_by_both(self):
         self.assertEqual(self.validate(doc(DEPRECATED)), [])
-        self.assertEqual(declarative.validate(doc(DEPRECATED)), [])
+        self.assertEqual(declarative._validate_local(doc(DEPRECATED)), [])
 
     def test_both_carry_the_same_rename_table(self):
         from keel.spec import compat
 
         self.assertEqual(compat.RENAMED, declarative.RENAMED)
+
+
+class TestValidationIsDelegatedToKeel(unittest.TestCase):
+    """validate() asks keel when keel is installed, the copy otherwise
+
+    keel is the writer of the description, so its validator decides what
+    the description may say; the copy in _validate_local is only the
+    fallback for an image without keel. A fake keel stands in here so the
+    delegation is tested without keel installed.
+    """
+
+    def fake_keel(self, errors):
+        calls = []
+
+        def validate(document, **kwargs):
+            calls.append(document)
+            return errors
+
+        modules = {
+            "keel": types.ModuleType("keel"),
+            "keel.spec": types.ModuleType("keel.spec"),
+            "keel.spec.validate": types.ModuleType("keel.spec.validate"),
+        }
+        modules["keel.spec.validate"].validate = validate
+        return modules, calls
+
+    def test_keel_is_asked_and_its_errors_are_returned(self):
+        modules, calls = self.fake_keel(["appliance.name: bad"])
+        with mock.patch.dict(sys.modules, modules):
+            found = declarative.validate(doc("version: 1\n"))
+        self.assertEqual(found, ["appliance.name: bad"])
+        self.assertEqual(len(calls), 1)
+
+    def test_keel_accepts_the_sections_the_copy_does_not_know(self):
+        modules, _ = self.fake_keel([])
+        text = (
+            "version: 1\n"
+            "instance:\n  hostname: blog\n"
+            "appliance:\n  name: core\n"
+            "installation:\n  mode: simple\n"
+            "overlays:\n"
+            "  installer: enabled\n"
+            "  etcd: disabled\n"
+            "security:\n  alerts: admin@example.org\n"
+            "monitor:\n  enabled: true\n  notify:\n    email: true\n"
+        )
+        with mock.patch.dict(sys.modules, modules):
+            self.assertEqual(declarative.validate(doc(text)), [])
+
+    def test_a_deprecated_name_is_canonical_before_keel_sees_it(self):
+        modules, calls = self.fake_keel([])
+        with mock.patch.dict(sys.modules, modules):
+            declarative.validate(doc(DEPRECATED))
+        self.assertIn("updates_at_first_boot", calls[0]["security"])
+        self.assertNotIn("updates", calls[0]["security"])
+
+    def test_the_copy_answers_when_keel_is_absent(self):
+        absent = {"keel": None, "keel.spec": None, "keel.spec.validate": None}
+        with mock.patch.dict(sys.modules, absent):
+            self.assertIsNone(declarative.keel_validator())
+        self.assertEqual(
+            declarative._validate_local(doc("version: 1\n")), []
+        )
+
+    def test_a_keel_that_cannot_be_imported_is_logged_and_stepped_over(self):
+        class Broken:
+            def __getattr__(self, name):
+                raise RuntimeError("keel is corrupt")
+
+        broken = {
+            "keel": types.ModuleType("keel"),
+            "keel.spec": types.ModuleType("keel.spec"),
+            "keel.spec.validate": Broken(),
+        }
+        messages = []
+        with mock.patch.dict(sys.modules, broken):
+            self.assertIsNone(declarative.keel_validator(log=messages.append))
+        self.assertTrue(any("keel" in m for m in messages), messages)
+
+    def test_a_broken_keel_without_a_logger_still_falls_back(self):
+        class Broken:
+            def __getattr__(self, name):
+                raise RuntimeError("keel is corrupt")
+
+        broken = {
+            "keel": types.ModuleType("keel"),
+            "keel.spec": types.ModuleType("keel.spec"),
+            "keel.spec.validate": Broken(),
+        }
+        with mock.patch.dict(sys.modules, broken):
+            self.assertIsNone(declarative.keel_validator())
+
+    def test_a_keel_missing_a_dependency_is_logged_not_silent(self):
+        """installed-but-broken and absent are different answers: only
+        the absent one is quiet (review of !48)"""
+
+        class MissingDep:
+            def __getattr__(self, name):
+                raise ModuleNotFoundError(
+                    "No module named 'yaml'", name="yaml"
+                )
+
+        broken = {
+            "keel": types.ModuleType("keel"),
+            "keel.spec": types.ModuleType("keel.spec"),
+            "keel.spec.validate": MissingDep(),
+        }
+        messages = []
+        with mock.patch.dict(sys.modules, broken):
+            self.assertIsNone(declarative.keel_validator(log=messages.append))
+        self.assertTrue(any("missing yaml" in m for m in messages), messages)
+
+    def test_an_absent_keel_is_quiet(self):
+        """no keel installed is the normal case, not a problem to log"""
+
+        class Absent:
+            def __getattr__(self, name):
+                raise ModuleNotFoundError(
+                    "No module named 'keel'", name="keel"
+                )
+
+        absent = {
+            "keel": types.ModuleType("keel"),
+            "keel.spec": types.ModuleType("keel.spec"),
+            "keel.spec.validate": Absent(),
+        }
+        messages = []
+        with mock.patch.dict(sys.modules, absent):
+            self.assertIsNone(declarative.keel_validator(log=messages.append))
+        self.assertEqual(messages, [])
+
+    def test_a_keel_whose_validator_raises_falls_back_to_the_copy(self):
+        modules, _ = self.fake_keel([])
+
+        def boom(document, **kwargs):
+            raise TypeError("validate() signature moved")
+
+        modules["keel.spec.validate"].validate = boom
+        messages = []
+        with mock.patch.dict(sys.modules, modules):
+            found = declarative.validate(
+                doc("version: 1\ninstance:\n  colour: blue\n"),
+                log=messages.append,
+            )
+        self.assertIn("instance.colour: unknown key", found)
+        self.assertTrue(any("keel" in m for m in messages), messages)
+
+    def test_a_raising_keel_without_a_logger_still_falls_back(self):
+        modules, _ = self.fake_keel([])
+
+        def boom(document, **kwargs):
+            raise TypeError("validate() signature moved")
+
+        modules["keel.spec.validate"].validate = boom
+        with mock.patch.dict(sys.modules, modules):
+            found = declarative.validate(
+                doc("version: 1\ninstance:\n  colour: blue\n")
+            )
+        self.assertIn("instance.colour: unknown key", found)
+
+    def test_unrendered_sections_names_what_is_left_to_keel(self):
+        text = (
+            "version: 1\n"
+            "instance:\n  hostname: blog\n"
+            "appliance:\n  name: core\n"
+            "monitor:\n  enabled: true\n"
+        )
+        self.assertEqual(
+            declarative.unrendered_sections(doc(text)),
+            ["appliance", "monitor"],
+        )
+        self.assertEqual(declarative.unrendered_sections(doc(FULL)), [])
+        self.assertEqual(declarative.unrendered_sections(None), [])
 
 
 if __name__ == "__main__":

@@ -4,6 +4,105 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/accept-keel-spec-sections: Python 99 (2026-10-16)
+
+File-handling hardening, the way privileged bootstrap tooling is hardened
+elsewhere (CWE-59, CWE-367). A secret file used to be checked with
+`stat()` and read with `open()` as two steps on a name, a textbook race
+for a root-run reader; `_open_secret_file()` now opens once with
+`O_NOFOLLOW | O_NONBLOCK` and verifies regular-file, mode and owner with
+`fstat` on the opened descriptor, so a symlink swapped in at the last
+component is refused with its own message (at validate time too, through
+`_secret_file_error()`, which is advisory and says so), a FIFO cannot
+stall the reader, and a mode loosened between check and read cannot race
+the check away. `write_conf()` was truncating the target in place: it
+now writes a private `O_EXCL` temporary in the same directory, fsyncs
+and `rename()`s over the target, which replaces a symlink instead of
+following it and is atomic, and each cleanup step is guarded so one
+failing close cannot mask the unlink. `load()` reads the description
+through a 1 MiB cap. The tests pin each guarantee: symlinked conf leaves
+the decoy untouched, no temporary survives a success or a forced failure
+at `fdopen` or `rename`, a symlinked or non-regular secret is refused
+with its reason, and a description over the cap is refused while one at
+the cap loads. The forced-`fdopen`-failure test caught a real bug: a
+close that raised in `finally` masked the temporary's unlink, leaving it
+on disk.
+
+The first boot writes a static IPv6 address, the same one keel writes
+(inithooks#21). `_network_env()` is now a port of
+`keel.spec.render.network_env`: `_ipv6_env()` exports `IP6_CONFIG`
+(`auto` and `dhcp` both render as `dhcp`, which is what ifupdown has),
+`IP6_ADDRESS` with its prefix length, `IP6_GW` and `IP6_SLAAC=no` when the
+spec says `slaac: false`; `_nameserver_env()`/`_one_of_each()` port the
+keel#45 placement, where a single static family carries one resolver of
+each family. The stale refusal of `ipv6.method: static` under
+`managed_by: file` is gone, and the `managed_by` argument of
+`_validate_interface()` went with it. An ipv6 block now exports its
+variables, so a spec without one still renders the conf it always did; the
+parity test against a keel checkout holds the port to the original over a
+matrix of 8 documents crossed with 7 nameserver lists, and the CLI test
+writes the #21 conf (static IPv6, slaac off, mixed-family resolvers).
+
+`libinithooks/declarative.py` 100 percent, `bin/declarative.py` 99 (the
+long-standing 119->108 branch miss). 595 pytest with keel beside the
+checkout, 582 plus 13 keel-gated skips without it.
+
+The hardening pass after the fix added an ordered conf-line parity test
+(the network lines of both readers' full render must be identical in
+order, not only the variable set) and `TestNetworkRenderParity` in
+`tests/test_spec_properties.py`, a seeded generator crossing methods,
+families, several interfaces, gateways and up to four nameservers of
+both families through both readers. Its first run caught a real trap the
+hand-picked matrix missed: IPv6 hextets are hexadecimal, so a decimal
+hextet above 0x9999 is out of range and both readers reject it the same
+way, which is itself the parity property holding, not a bug in the port.
+
+## Branch fix/accept-keel-spec-sections: Python 99 (2026-10-15)
+
+The first boot accepts every spec section keel accepts (inithooks#31).
+`libinithooks/declarative.py` gains `keel_validator()`, which imports
+`keel.spec.validate` when the keel package is installed and answers None
+otherwise, and `validate()` now asks it (over the canonical document) when
+it is there, falling back to `_validate_local()`, the renamed copy of the
+old validator. The fallback no longer keeps a second copy of keel's key
+list: it validates the sections it renders (`RENDERED_SECTIONS`) and
+accepts every other top level section, since a section it does not act on
+is keel's to check; an unknown key inside a rendered section is still an
+error. `load()` also turns a description that is not UTF-8 into a
+`DeclarativeError` instead of a traceback, found by the new fuzz test.
+
+The suite grows a differential corpus (`tests/test_spec_corpus.py`: the
+fixtures under `tests/fixtures/specs/`, including the exact #31
+description, run through both readers with the verdicts compared),
+seeded property tests (`tests/test_spec_properties.py`: canonical is
+idempotent and does not mutate, the verdict and the render are stable
+under it, a valid document stays valid when an unrendered section goes,
+and `load()` on random bytes only ever returns a mapping or raises
+`DeclarativeError`), keel end-to-end tests
+(`tests/test_declarative_keel.py`: the #31 spec writes the conf, a
+malformed `appliance` and an unknown top-level key are refused) and
+`TestValidationIsDelegatedToKeel` in `tests/test_vocabulary.py`. The
+local-behaviour tests now call `_validate_local` directly, so a machine
+that happens to have keel installed does not change what they measure.
+
+The change is hardened where it touches something inithooks does not
+control. `keel_validator()` now catches a keel that is installed but
+cannot be imported, not only an absent one, and `validate()` catches a
+keel whose validator raises (a moved signature, say), logs one line and
+falls back to the built-in copy: the conf phase is not something the boot
+depends on, so a broken keel is stepped over rather than failing the
+first boot, the stop-not-abort policy of keel's own `10keel-system` and
+the "recoverable failure" that cloud-init reports and continues on.
+`unrendered_sections()` names the top level sections this reader does not
+render, and `bin/declarative.py` logs them once, so the accept-and-skip
+of the fallback is visible instead of silent. `keel_validator()` and
+`validate()` take an optional `log` callable for this; `00declarative`
+passes the inithooks log, the tests pass a recorder.
+
+`libinithooks/declarative.py` 100 percent, `bin/declarative.py` 99 (the
+long-standing 119->108 branch miss). 571 pytest with keel beside the
+checkout, 562 plus 9 keel-gated skips without it.
+
 ## Branch fix/secupdates-never-hold-boot: shell 99.71 (2026-10-03)
 
 `firstboot.d/95secupdates` 110/111 (the line not run is still the TurnKey
