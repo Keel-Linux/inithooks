@@ -1,3 +1,15 @@
+inithooks (2.3.6+keel35) trixie; urgency=medium
+
+  * 95secupdates fetches only the security source's indices. It ran
+    apt-get update on every source, 8.6 MB, which took 132 s on a 250 ms
+    link with 1.5 percent loss and so never finished within the 120 s
+    limit: the first boot went on with no security fix installed. The
+    security indices are 0.5 MB and took 4 s on the same link, and the
+    upgrade 16 s. APT::Get::List-Cleanup=false keeps the lists of the other
+    sources (handbook decision 0073). tests/test-secupdates.bats (38 tests).
+
+ -- Keel Linux maintainers <admin@keellinux.org>  Fri, 30 Oct 2026 16:45:00 +0000
+
 inithooks (2.3.6+keel34) trixie; urgency=medium
 
   * A serial-only console is asked before it is named unattended. stty
