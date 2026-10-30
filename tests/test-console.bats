@@ -35,6 +35,7 @@ setup() {
     } > "$INITHOOKS_DEFAULT"
     export INITHOOKS_LOGFILE=$BATS_TEST_TMPDIR/inithooks.log
     export CONSOLE_TIMEOUT=1
+    export CONSOLE_ASK_TIMEOUT=1
     OUT=$BATS_TEST_TMPDIR/out
     write_decided
     unset INITHOOKS_UNATTENDED
@@ -59,6 +60,44 @@ def controlling():
 # reach CMD
 proc = subprocess.run(cmd, stdin=slave, stdout=slave, preexec_fn=controlling,
                       close_fds=False)
+sys.exit(proc.returncode)
+PY
+}
+
+# on_pty_answer ANSWER SIZED CMD...
+# Like on_pty, but an operator is at the master, on a slow line: the
+# master is read, slower than the probe writes (a serial line missing
+# the probe window, inithooks#40), and when the console prompt appears
+# ANSWER is written, literally ($'\n' is a bare Enter).
+on_pty_answer() {
+    timeout "$DEADLINE" python3 - "$@" <<'PY'
+import fcntl, os, pty, select, struct, subprocess, sys, termios, time
+answer, sized, cmd = sys.argv[1].encode(), sys.argv[2], sys.argv[3:]
+master, slave = pty.openpty()
+if sized == "sized":
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+def controlling():
+    os.setsid()
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+proc = subprocess.Popen(cmd, stdin=slave, stdout=slave,
+                        preexec_fn=controlling, close_fds=False)
+seen, answered, deadline = b"", False, time.time() + 25
+while proc.poll() is None and time.time() < deadline:
+    ready, _, _ = select.select([master], [], [], 0.5)
+    if not ready:
+        continue
+    try:
+        data = os.read(master, 4096)
+    except OSError:
+        break
+    if not data:
+        break
+    seen += data
+    time.sleep(0.3)  # the slow line: drain slower than the probe writes
+    if not answered and b"press Enter" in seen:
+        os.write(master, answer)
+        answered = True
+proc.wait()
 sys.exit(proc.returncode)
 PY
 }
@@ -99,6 +138,57 @@ hangs() {
 
     [ "$status" -eq 0 ]
     [ "$(cat "$OUT")" = "0 the console has no size, nobody is attached to it" ]
+}
+
+@test "an operator at a serial console, sized 0 0, who presses Enter is answered" {
+    # inithooks#40: stty answers 0 0 on a serial line, an operator at it
+    # or not; the ask is what sees them
+    export CONSOLE_ASK_TIMEOUT=5
+    run on_pty_answer $'\n' unsized bash "$DECIDED"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$OUT")" = "1 no" ]
+}
+
+@test "an operator on a slow console that misses the probe is answered" {
+    # the probe fails (nobody reads the pty), and the ask after it still
+    # finds the operator
+    export CONSOLE_ASK_TIMEOUT=5
+    run on_pty_answer $'\n' sized bash "$DECIDED"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$OUT")" = "1 no" ]
+}
+
+@test "a line of text at a serial console is not an answer" {
+    # serial noise or typed-ahead text must not flip the verdict to
+    # attended: a wrong attended hangs the boot (#39), a wrong
+    # unattended only takes the headless path; only a bare Enter counts
+    export CONSOLE_ASK_TIMEOUT=1
+    run on_pty_answer $'x\n' unsized bash "$DECIDED"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$OUT")" = "0 the console has no size, nobody is attached to it" ]
+}
+
+@test "a serial console that is answered is given the conventional size" {
+    # agetty fills a 0 0 serial line with 24x80 (util-linux
+    # term-utils/agetty.c); the ask does the same so dialog draws by it
+    local sized=$BATS_TEST_TMPDIR/sized_out
+    local decided=$BATS_TEST_TMPDIR/decided_sized
+    cat > "$decided" <<EOF
+source '$REPO/lib/console.sh'
+status=0
+console_unattended || status=\$?
+stty size </dev/tty > '$sized'
+bash -c 'echo "\$1 \$INITHOOKS_UNATTENDED"' - "\$status" > '$OUT'
+EOF
+    export CONSOLE_ASK_TIMEOUT=5
+    run on_pty_answer $'\n' unsized bash "$decided"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$OUT")" = "1 no" ]
+    [ "$(cat "$sized")" = "24 80" ]
 }
 
 @test "nobody answers a sized console whose master is never read" {
