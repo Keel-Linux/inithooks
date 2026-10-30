@@ -208,7 +208,14 @@ install_updates() {
     if (( $(left) < limit )); then
         limit=$(left)
     fi
-    bounded "$limit" apt-get update || status=$?
+    # Only the security source's indices: all of the sources are 8.6 MB,
+    # which took 132 s on a 250 ms link with loss (2026-10-30) and so never
+    # finished within the limit; the security indices are 0.5 MB and 4 s.
+    # List-Cleanup=false keeps the lists of the other sources apt has.
+    bounded "$limit" apt-get update \
+        -o Dir::Etc::sourceparts=/dev/null \
+        -o Dir::Etc::sourcelist="$SEC_UPDATES_SOURCES" \
+        -o APT::Get::List-Cleanup=false || status=$?
     if timed_out "$status"; then
         offline "apt-get update did not finish in $limit s"
     elif [[ "$status" -ne 0 ]]; then

@@ -72,9 +72,10 @@ exit "${LS_STATUS:-0}"'
         SEC_UPDATES_TIMEOUT SEC_UPDATES_UPDATE_TIMEOUT
 }
 
-# the value the dist-upgrade call passed for one apt option
+# the value the apt-get call for VERB (default dist-upgrade) passed for one
+# apt option
 apt_option() {
-    calls apt-get | grep -o -- "-o $1=[^ ]*" | sed "s|^-o $1=||"
+    calls apt-get | grep -- "^${2:-dist-upgrade}" | grep -o -- "-o $1=[^ ]*" | sed "s|^-o $1=||"
 }
 
 @test "a preseeded SKIP installs nothing and records skip" {
@@ -204,6 +205,19 @@ apt_option() {
     [ "$status" -eq 0 ]
     [ "$(apt_option Dir::Etc::sourcelist)" = "$SEC_UPDATES_SOURCES" ]
     [ "$(apt_option Dir::Etc::sourceparts)" = /dev/null ]
+}
+
+@test "the update fetches the security source's indices alone and keeps the other lists" {
+    # all of the sources took 132 s on a 250 ms link and never finished
+    # within the 120 s limit; the security indices took 4 s
+    echo "export SEC_UPDATES=FORCE" > "$INITHOOKS_CONF"
+
+    run "$REPO/firstboot.d/95secupdates"
+
+    [ "$status" -eq 0 ]
+    [ "$(apt_option Dir::Etc::sourcelist update)" = "$SEC_UPDATES_SOURCES" ]
+    [ "$(apt_option Dir::Etc::sourceparts update)" = /dev/null ]
+    [ "$(apt_option APT::Get::List-Cleanup update)" = false ]
 }
 
 @test "the default security source is security.sources, the file images ship" {
