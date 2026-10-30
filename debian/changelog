@@ -1,3 +1,11 @@
+inithooks (2.3.6+keel33) trixie; urgency=medium
+
+  * keel-host-keys generates its independent keys in parallel: the three
+    SSH host keys, the TLS pair and the snakeoil pair. They write
+    different files, and a failure in any one still fails the unit.
+
+ -- Marcos Méndez <mendez.foto@gmail.com>  Wed, 28 Oct 2026 00:00:00 +0000
+
 inithooks (2.3.6+keel31) trixie; urgency=medium
 
   * Address the review of !48. The keel CI job now runs on keel-container
@@ -94,6 +102,7 @@ inithooks (2.3.6+keel28) trixie; urgency=medium
     accept-and-skip is visible rather than silent.
 
  -- Emiliano Gandini Outeda <emiliano.gandini@protonmail.com>  Thu, 15 Oct 2026 23:30:00 +0000
+
 inithooks (2.3.6+keel27) trixie; urgency=medium
 
   * Every postgresql@ instance starts after keel-host-keys.service. On a
