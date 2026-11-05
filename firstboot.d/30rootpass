@@ -7,7 +7,9 @@
 # offers to keep a password set before the first boot (pct create
 # --password, or LXC in the root file system) when there is one. When
 # nobody can answer the console (lib/console.sh), the password stays as
-# the machine has it, set before the first boot or locked, as Keep does.
+# the machine has it, set before the first boot or locked, as Keep does,
+# and the question is recorded for keel-init (console_deferred): the
+# first login starts keel-init, which asks it.
 
 USERNAME=root
 
@@ -23,7 +25,7 @@ INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
 [ -e "$INITHOOKS_CONF" ] && . "$INITHOOKS_CONF"
 
 if [ -z "$ROOT_PASS" ] && console_unattended; then
-    console_skipped 30rootpass "the $USERNAME password stays as the machine has it (pct create --password, or locked); keel-init asks it"
+    console_deferred 30rootpass "the $USERNAME password stays as the machine has it (pct create --password, or locked); keel-init asks it"
     exit 0
 fi
 "$INITHOOKS_PATH/bin/setpass.py" "$USERNAME" --pass="$ROOT_PASS"

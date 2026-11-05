@@ -67,6 +67,8 @@ EOF
     export INITHOOKS_DEFAULT=$DEFAULT
     export INITHOOKS_LOCK=$ROOT/inithooks.lock
     export INITHOOKS_COMPLETE=$ROOT/inithooks-complete
+    # a question left to keel-init is recorded here, never on the machine
+    export INITHOOKS_DEFERRED=$ROOT/deferred
     export PYTHONPATH=$REPO${PYTHONPATH:+:$PYTHONPATH}
     export DIALOG_LOG=$ROOT/dialog.log
     # an image built today, whose root got a password today, after it

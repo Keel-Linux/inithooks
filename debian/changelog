@@ -1,3 +1,33 @@
+inithooks (2.3.6+keel36) trixie; urgency=medium
+
+  * The first login starts keel-init when the headless first boot left a
+    question to it. On BR2, 2026-11-05, a WordPress LXC nobody was
+    attached to logged "keel-init asks it" for the root password, but
+    97turnkey-init-fence-disable disabled the fence and the first login
+    opened confconsole, never keel-init.
+    - lib/console.sh: console_deferred HOOK WHAT does what
+      console_skipped does and adds HOOK, once, to the record
+      /var/lib/inithooks/deferred (INITHOOKS_DEFERRED). A record that
+      cannot be written gives an error line and does not stop the hook.
+      console_skipped is unchanged, for questions that are not deferred.
+    - 30rootpass calls console_deferred.
+    - 97turnkey-init-fence-disable, in the boot run: when the record is
+      not empty, it makes the profile fence of root (or of the sudo
+      admin) executable and keeps the fence service up. In the keel-init
+      run it also removes the record. It reads INITHOOKS_DEFAULT, as the
+      other hooks do. tests/test-fence-disable.bats (8 tests).
+  * 09hostname replaces the name of the build host with the name of the
+    machine. common/conf/turnkey.d/postfix-local sets myhostname to the
+    build host's name, and on LXC Proxmox names the machine before it
+    boots, so hostname_set found nothing to replace: on BR2, 2026-11-05,
+    postfix kept "myhostname = core" and mail went out From root@core.
+    lib/hostname.sh: hostname_adopt takes the build name from
+    /etc/mailname, else from postconf myhostname (first label, never
+    localhost), and replaces it in the HOSTNAME_FILES. tests in
+    tests/test-hostname.bats (10 new).
+
+ -- Keel Linux maintainers <admin@keellinux.org>  Thu, 05 Nov 2026 19:00:00 +0000
+
 inithooks (2.3.6+keel35) trixie; urgency=medium
 
   * 95secupdates fetches only the security source's indices. It ran

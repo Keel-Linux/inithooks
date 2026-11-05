@@ -1,6 +1,8 @@
 #!/bin/bash -e
 # set hostname
-# HOSTNAME: the name (if none specified, nothing is done)
+# HOSTNAME: the name; when nothing preseeds it, bash has set it to the
+# name the machine has. Then the name of the build host is replaced with
+# it (hostname_adopt). An empty HOSTNAME does nothing.
 #
 # The rename itself is lib/hostname.sh, shared with 31fqdn.
 
@@ -18,5 +20,10 @@ fi
 [[ -z "$HOSTNAME" ]] && exit 0
 
 hostname_set "$HOSTNAME"
+# The files can still carry the name of the build host (postfix's
+# myhostname, /etc/mailname): on LXC the machine has its name before it
+# boots, so hostname_set has nothing to replace. HOSTNAME is the name
+# the machine has when nothing preseeds it, because bash sets it.
+hostname_adopt
 
 exit 0

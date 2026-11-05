@@ -4,6 +4,19 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/first-login-keel-init: shell 99.74 (2026-11-05)
+
+`lib/console.sh` (console_deferred, 40 of 40 lines),
+`firstboot.d/30rootpass` (10 of 10), `firstboot.d/97turnkey-init-fence-disable`
+(30 of 30), `lib/hostname.sh` (hostname_adopt, 24 of 24) and
+`firstboot.d/09hostname` (9 of 9) are at 100 percent. 30rootpass and 97 were
+not measured before: the tests ran copies of 30rootpass, and no test ran 97.
+`tests/test-console.bats` now also runs the 30rootpass of the tree, and
+`tests/test-fence-disable.bats` (8 tests) runs 97 with INITHOOKS_DEFAULT,
+FENCE_ROOT and INITHOOKS_DEFERRED on scratch paths. Total 99.74 (was 99.71);
+the lowest file is still lib/init-fence.sh, 83 of 84. Python unchanged:
+584 passed, 13 skipped.
+
 ## Branch fix/accept-keel-spec-sections: Python 99 (2026-10-16)
 
 File-handling hardening, the way privileged bootstrap tooling is hardened
