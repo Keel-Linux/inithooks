@@ -1,13 +1,15 @@
 #!/usr/bin/env bats
 # Tests for lib/keel-firstboot.sh, firstboot.d/75keel-role and
-# firstboot.d/80keel-cloud: the first boot asks this node's role
-# (standalone, primary or replica) and an optional Keel Cloud API key,
-# handbook decision 0020. The screens are confconsole's
+# firstboot.d/80keel-cloud: the first boot asks the installation mode,
+# then this node's role, then an optional Keel Cloud API key, handbook
+# decisions 0020, 0028 and 0076. The screens are confconsole's
 # (keelfirstboot.py); these hooks only hand them the step and the
-# preseeded values, and stay out of the way where confconsole is absent.
+# preseeded values, leave a question nobody can answer to keel-init, and
+# stay out of the way where confconsole is absent.
 #
 # python3 is a stub: it records the arguments and the HUB_APIKEY it was
-# given, and answers with the status a test sets.
+# given, and answers with the status a test sets: PYTHON_STATUS_<step>,
+# else PYTHON_STATUS.
 
 bats_require_minimum_version 1.5.0
 
@@ -19,7 +21,8 @@ setup() {
     setup_stubs
     stub python3 'echo "HUB_APIKEY=${HUB_APIKEY-unset}" >> "'"$STUBS"'/python3.env"
 if [[ -t 0 ]]; then echo terminal; else echo none; fi >> "'"$STUBS"'/python3.stdin"
-exit "${PYTHON_STATUS:-0}"'
+step_status="PYTHON_STATUS_$2"
+exit "${!step_status:-${PYTHON_STATUS:-0}}"'
 
     export INITHOOKS_PATH=$BATS_TEST_TMPDIR/inithooks
     mkdir -p "$INITHOOKS_PATH"
@@ -37,14 +40,81 @@ exit "${PYTHON_STATUS:-0}"'
     # says otherwise
     export INITHOOKS_UNATTENDED=no
     export INITHOOKS_LOGFILE=$BATS_TEST_TMPDIR/inithooks.log
+    export INITHOOKS_DEFERRED=$BATS_TEST_TMPDIR/deferred
     unset HUB_APIKEY
 }
 
-@test "75keel-role asks confconsole's first boot screen for the role" {
+@test "75keel-role asks the installation mode, then the role" {
     run "$REPO/firstboot.d/75keel-role"
 
     [ "$status" -eq 0 ]
-    [ "$(calls python3)" = "$KEEL_FIRSTBOOT role" ]
+    [ "$(calls python3)" = "$KEEL_FIRSTBOOT mode
+$KEEL_FIRSTBOOT role" ]
+    [ ! -e "$INITHOOKS_DEFERRED" ]
+}
+
+@test "nobody to answer the mode: keel-init asks it, and the role step still runs" {
+    export INITHOOKS_UNATTENDED="the console has no size"
+    export PYTHON_STATUS_mode=75
+
+    run --separate-stderr "$REPO/firstboot.d/75keel-role"
+
+    [ "$status" -eq 0 ]
+    [ "$(calls python3)" = "$KEEL_FIRSTBOOT mode
+$KEEL_FIRSTBOOT role" ]
+    [ "$(cat "$INITHOOKS_DEFERRED")" = 75keel-role ]
+    [ "$(head -1 "$INITHOOKS_LOGFILE")" = "INFO: [75keel-role] not asked, nobody can answer (the console has no size): confconsole's mode screen has a question: keel-init asks it" ]
+}
+
+@test "a cloud node's role left to keel-init is recorded once" {
+    export INITHOOKS_UNATTENDED="the console has no size"
+    export PYTHON_STATUS=75
+
+    run "$REPO/firstboot.d/75keel-role"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$INITHOOKS_DEFERRED")" = 75keel-role ]
+}
+
+@test "a preseeded mode: the step asks nothing and nothing is left to keel-init" {
+    # keelfirstboot.py mode exits 0 when installation.mode is declared
+    # (I2 of decision 0076; tests/test_first_boot.py in confconsole)
+    export INITHOOKS_UNATTENDED="the console has no size"
+
+    run "$REPO/firstboot.d/75keel-role"
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$INITHOOKS_DEFERRED" ]
+    [ "$(cat "$INITHOOKS_LOGFILE")" = "INFO: [75keel-role] not asked, nobody can answer (the console has no size): confconsole's mode screen is run without a terminal and draws nothing
+INFO: [75keel-role] not asked, nobody can answer (the console has no size): confconsole's role screen is run without a terminal and draws nothing" ]
+}
+
+@test "a screen that found no terminal after all leaves its question to keel-init" {
+    export PYTHON_STATUS_role=75
+
+    run "$REPO/firstboot.d/75keel-role"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$INITHOOKS_DEFERRED")" = 75keel-role ]
+}
+
+@test "a mode step that fails stops the hook before the role" {
+    export PYTHON_STATUS_mode=3
+
+    run "$REPO/firstboot.d/75keel-role"
+
+    [ "$status" -eq 3 ]
+    [ "$(calls python3)" = "$KEEL_FIRSTBOOT mode" ]
+}
+
+@test "a step that fails with nobody to answer is reported by its status" {
+    export INITHOOKS_UNATTENDED="the console has no size"
+    export PYTHON_STATUS_mode=3
+
+    run "$REPO/firstboot.d/75keel-role"
+
+    [ "$status" -eq 3 ]
+    [ ! -e "$INITHOOKS_DEFERRED" ]
 }
 
 @test "nobody to answer: the screen is run without a terminal, and it is said" {
@@ -66,7 +136,8 @@ exit "${PYTHON_STATUS:-0}"'
     run script -qec "$REPO/firstboot.d/75keel-role" /dev/null < /dev/null
 
     [ "$status" -eq 0 ]
-    [ "$(cat "$STUBS/python3.stdin")" = terminal ]
+    [ "$(cat "$STUBS/python3.stdin")" = "terminal
+terminal" ]
 }
 
 @test "80keel-cloud asks for the Keel Cloud key" {

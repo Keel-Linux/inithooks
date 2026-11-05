@@ -87,6 +87,8 @@ def keel_init(tmp_path, monkeypatch):
     complete = tmp_path / "inithooks-complete"
     monkeypatch.setenv("INITHOOKS_DEFAULT", str(default))
     monkeypatch.setenv("INITHOOKS_COMPLETE", str(complete))
+    # no instance description, unless a test writes one
+    monkeypatch.setenv("KEEL_SPEC", str(tmp_path / "instance.yaml"))
     stub = types.ModuleType("conffile")
     exec(CONFFILE_STUB, stub.__dict__)
     monkeypatch.setitem(sys.modules, "conffile", stub)
@@ -856,6 +858,22 @@ def test_status_when_the_fence_is_down(
         keel_init.main()
     assert done.value.code == 0
     assert capsys.readouterr().out == ""
+
+
+def test_status_of_a_cloud_node_that_still_needs_a_join(
+    keel_init, lock, stubs, status_argv, capsys, tmp_path
+):
+    # decision 0076, I3: the login message says it
+    executable(str(stubs / "systemctl"), "#!/bin/sh\nexit 3\n")
+    (tmp_path / "instance.yaml").write_text(
+        "version: 1\ninstallation: {mode: cloud_simple}\n")
+    with pytest.raises(SystemExit) as done:
+        keel_init.main()
+    assert done.value.code == 0
+    out = capsys.readouterr().out
+    assert out.startswith("    This node is in the cloud_simple mode and is"
+                          " in no mesh yet: run keel-init")
+    assert out.endswith("\n\n")
 
 
 def test_fence_down_without_systemctl(keel_init, tmp_path, monkeypatch):
