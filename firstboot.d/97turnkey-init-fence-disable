@@ -1,11 +1,38 @@
 #!/bin/bash -e
+# The fence at the end of the first boot: down, or up until keel-init.
+#
+# The fence is the turnkey-init-fence service (the web ports show "not
+# initialized yet") and the profile fence, ~/.profile.d/turnkey-init-fence,
+# which starts keel-init at a login when it is executable.
+#
+# - keel-init run (_TURNKEY_INIT): keel-init has asked its questions, so
+#   the fence goes down for good, and the record of the questions left to
+#   keel-init (console_deferred, lib/console.sh) is cleared.
+# - boot run, AUTO_RUN set: 30turnkey-init-fence armed the profile fence;
+#   the fence stays up, as before.
+# - boot run, a hook left a question to keel-init: the profile fence is
+#   armed and the service stays up, so the first login starts keel-init.
+#   On BR2, 2026-11-05, a headless WordPress LXC left the root password to
+#   keel-init, this hook disabled the fence, and the first login opened
+#   confconsole, never keel-init. 30turnkey-init-fence cannot decide it: it
+#   runs before the hooks that defer their questions.
+# - boot run, else: the fence goes down, as before.
+#
+# FENCE_ROOT prefixes the homes, for a test that works on scratch copies;
+# on a machine it is empty.
 
+INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
 # shellcheck source=default/inithooks
-source /etc/default/inithooks
+source "$INITHOOKS_DEFAULT"
 if [[ -e "$INITHOOKS_CONF" ]]; then
     # shellcheck disable=SC1090
     source "$INITHOOKS_CONF"
 fi
+# shellcheck source=lib/console.sh
+source "$INITHOOKS_PATH/lib/console.sh"
+
+FENCE_ROOT="${FENCE_ROOT:-}"
+PROFILE_FENCE=.profile.d/turnkey-init-fence
 
 disable_init_fence() {
     systemctl disable turnkey-init-fence
@@ -13,17 +40,37 @@ disable_init_fence() {
     echo "turnkey-init-fence is down"
 }
 
-if [[ -n "$_TURNKEY_INIT" ]]; then
-    # ONLY run this from within turnkey-init
-    for home in /root /home/admin; do
-        if [[ -e $home/.profile.d/turnkey-init-fence ]]; then
-            chmod -x $home/.profile.d/turnkey-init-fence
+# arm_profile_fence: makes the profile fence of the user who logs in
+# executable, root or the sudo admin, as 30turnkey-init-fence picks it
+arm_profile_fence() {
+    local home=$FENCE_ROOT/root deferred
+    if [[ "${SUDOADMIN,,}" == "true" ]]; then
+        home=$FENCE_ROOT/home/admin
+    fi
+    deferred=$(paste -sd ' ' "$INITHOOKS_DEFERRED")
+    if [[ -f "$home/$PROFILE_FENCE" ]]; then
+        chmod +x "$home/$PROFILE_FENCE"
+        echo "turnkey-init-fence stays up: the first login starts keel-init, which asks what $deferred left"
+    else
+        echo "turnkey-init-fence stays up: no $home/$PROFILE_FENCE to start keel-init at the login, run keel-init to answer what $deferred left"
+    fi
+}
+
+if [[ -n "${_TURNKEY_INIT:-}" ]]; then
+    # ONLY run this from within keel-init
+    for home in "$FENCE_ROOT/root" "$FENCE_ROOT/home/admin"; do
+        if [[ -e "$home/$PROFILE_FENCE" ]]; then
+            chmod -x "$home/$PROFILE_FENCE"
         fi
     done
-    chmod -x /usr/lib/inithooks/firstboot.d/??turnkey-init-fence*
+    chmod -x "$INITHOOKS_PATH"/firstboot.d/??turnkey-init-fence*
+    rm -f "$INITHOOKS_DEFERRED"
     disable_init_fence
-elif [[ -z "$AUTO_RUN" ]]; then
-    # disable the init-fence if AUTO_RUN not set (set by firstboot.d/29preseed
-    # on headless builds)
+elif [[ -n "${AUTO_RUN:-}" ]]; then
+    # AUTO_RUN is set by firstboot.d/29preseed on headless builds
+    :
+elif [[ -s "$INITHOOKS_DEFERRED" ]]; then
+    arm_profile_fence
+else
     disable_init_fence
 fi

@@ -3,7 +3,8 @@
 # 30rootpass, 31fqdn, 75keel-role and 80keel-cloud (lib/keel-firstboot.sh),
 # 85secalerts, 95secupdates and 99reboot. When nobody can, the hook asks
 # nothing and does what it does with no answer, and says so in one line
-# (console_skipped).
+# (console_skipped). A hook that leaves its question to keel-init also
+# records it (console_deferred), so that the first login starts keel-init.
 #
 # The published Web 19.0-3 booted headless in an LXC container on
 # 2026-10-03 stopped at 31fqdn for good: its screen was drawn on tty1, a pty
@@ -37,6 +38,9 @@ CONSOLE_TIMEOUT="${CONSOLE_TIMEOUT:-${NOTICE_TIMEOUT:-2}}"
 CONSOLE_PROBE_BYTES="${CONSOLE_PROBE_BYTES:-131072}"
 CONSOLE_ASK_TIMEOUT="${CONSOLE_ASK_TIMEOUT:-5}"
 CONSOLE_TTY="${CONSOLE_TTY:-/dev/tty}"
+# The questions a hook left to keel-init (console_deferred), one hook name
+# a line. 97turnkey-init-fence-disable reads it at the end of the boot run.
+INITHOOKS_DEFERRED="${INITHOOKS_DEFERRED:-/var/lib/inithooks/deferred}"
 
 # console_unattended
 # Succeeds when nobody can answer the console, the reason then being in
@@ -130,9 +134,34 @@ console_probe() {
 # inithooks.service sends to the journal, and in the inithooks log. Never
 # on the console, which may not take it.
 console_skipped() {
-    local line="[$1] not asked, nobody can answer ($INITHOOKS_UNATTENDED): $2"
-    echo "$line" >&2
+    console_log INFO "[$1] not asked, nobody can answer ($INITHOOKS_UNATTENDED): $2"
+}
+
+# console_deferred HOOK WHAT
+# console_skipped for a question that keel-init asks later. The hook name
+# is also added to INITHOOKS_DEFERRED, once. When the record is not empty
+# at the end of the boot run, 97turnkey-init-fence-disable keeps the
+# fence, and the first login starts keel-init. On BR2, 2026-11-05, a
+# headless LXC logged "keel-init asks it" for the root password, but
+# nothing made the first login start keel-init: it opened confconsole.
+# A record that cannot be written does not stop the hook, as a log that
+# cannot be written does not; it gives an error line.
+console_deferred() {
+    console_skipped "$1" "$2"
+    if grep -qsxF -- "$1" "$INITHOOKS_DEFERRED"; then
+        return 0
+    fi
+    if ! { mkdir -p "${INITHOOKS_DEFERRED%/*}" \
+            && printf '%s\n' "$1" >> "$INITHOOKS_DEFERRED"; } 2>/dev/null; then
+        console_log ERROR "[$1] cannot record the question in $INITHOOKS_DEFERRED: the first login does not start keel-init, run keel-init"
+    fi
+}
+
+# console_log LEVEL LINE
+# LINE on stderr, and with LEVEL in the inithooks log when there is one.
+console_log() {
+    echo "$2" >&2
     if [[ -n "${INITHOOKS_LOGFILE:-}" ]]; then
-        { echo "INFO: $line" >> "$INITHOOKS_LOGFILE"; } 2>/dev/null || true
+        { echo "$1: $2" >> "$INITHOOKS_LOGFILE"; } 2>/dev/null || true
     fi
 }

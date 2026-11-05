@@ -40,16 +40,59 @@ FILES
 # whole name or a first label, then sets the kernel's name to NEW. The
 # same name twice touches no file.
 hostname_set() {
-    local new=$1 old file
+    local new=$1 old
     old=$(hostname)
     if [[ "$old" != "$new" ]]; then
-        for file in "${HOSTNAME_FILES[@]}"; do
-            if [[ -f "$HOSTNAME_ROOT$file" ]]; then
-                HOSTNAME_OLD=$old HOSTNAME_NEW=$new perl -pi -e \
-                    's/(?<![A-Za-z0-9_.-])\Q$ENV{HOSTNAME_OLD}\E(?![A-Za-z0-9_-])/$ENV{HOSTNAME_NEW}/g' \
-                    "$HOSTNAME_ROOT$file"
-            fi
-        done
+        hostname_replace "$old" "$new"
     fi
     hostname "$new"
+}
+
+# hostname_replace OLD NEW
+# Replaces OLD with NEW in the files, as a whole name or a first label.
+hostname_replace() {
+    local file
+    for file in "${HOSTNAME_FILES[@]}"; do
+        if [[ -f "$HOSTNAME_ROOT$file" ]]; then
+            HOSTNAME_OLD=$1 HOSTNAME_NEW=$2 perl -pi -e \
+                's/(?<![A-Za-z0-9_.-])\Q$ENV{HOSTNAME_OLD}\E(?![A-Za-z0-9_-])/$ENV{HOSTNAME_NEW}/g' \
+                "$HOSTNAME_ROOT$file"
+        fi
+    done
+}
+
+# hostname_build_name
+# The name of the host the image was built on, as the image's mail
+# configuration has it: the first label of /etc/mailname, else of
+# postfix's myhostname. common/conf/turnkey.d/postfix-local sets
+# myhostname to the build host's name. Nothing when the machine has
+# neither, or when the name is localhost, which is not a build name, and
+# whose replacement would rewrite the loopback line of /etc/hosts.
+hostname_build_name() {
+    local name=
+    if [[ -s "$HOSTNAME_ROOT/etc/mailname" ]]; then
+        read -r name < "$HOSTNAME_ROOT/etc/mailname" || true
+    elif command -v postconf > /dev/null; then
+        name=$(postconf -c "$HOSTNAME_ROOT/etc/postfix" -h myhostname 2>/dev/null) || name=
+    fi
+    name=${name%%.*}
+    if [[ "$name" != localhost ]]; then
+        echo "$name"
+    fi
+}
+
+# hostname_adopt
+# Replaces the build name with the name the machine has (hostname) in the
+# files, when the two differ. On LXC, Proxmox names the machine before it
+# boots, so hostname_set finds the new name already in place and changes
+# no file: on BR2, 2026-11-05, a WordPress LXC kept postfix's
+# "myhostname = core" and sent its mail From root@core. The kernel's name
+# is not set: it is already the right one.
+hostname_adopt() {
+    local build current
+    build=$(hostname_build_name)
+    current=$(hostname)
+    if [[ -n "$build" ]] && [[ "$build" != "${current%%.*}" ]]; then
+        hostname_replace "$build" "$current"
+    fi
 }

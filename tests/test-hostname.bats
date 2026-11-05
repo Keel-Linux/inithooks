@@ -6,7 +6,8 @@
 # machine the same way instead of carrying a copy.
 #
 # hostname is a stub: it answers the name the machine has and records the
-# name it is given. The files are scratch copies under HOSTNAME_ROOT.
+# name it is given, and from then on answers that name, as the kernel
+# does. The files are scratch copies under HOSTNAME_ROOT.
 
 bats_require_minimum_version 1.5.0
 
@@ -14,9 +15,21 @@ load helpers
 
 REPO=$BATS_TEST_DIRNAME/..
 
+# stateful_hostname NAME
+# Stubs hostname: with no argument it answers NAME, or the last name it
+# was given.
+stateful_hostname() {
+    stub hostname "state='$BATS_TEST_TMPDIR/hostname.state'
+if [[ \$# -eq 0 ]]; then
+    cat \"\$state\" 2>/dev/null || echo '$1'
+else
+    echo \"\$1\" > \"\$state\"
+fi"
+}
+
 setup() {
     setup_stubs
-    stub hostname 'if [[ $# -eq 0 ]]; then echo blog; fi'
+    stateful_hostname blog
 
     export HOSTNAME_ROOT=$BATS_TEST_TMPDIR/root
     mkdir -p "$HOSTNAME_ROOT/etc/postfix"
@@ -152,7 +165,7 @@ setup() {
 
     [ "$status" -eq 0 ]
     [ "$(cat "$HOSTNAME_ROOT/etc/hostname")" = web ]
-    [ "$(calls hostname | tail -1)" = web ]
+    [ "$(calls hostname | grep . | tail -1)" = web ]
 }
 
 @test "09hostname without a preseed renames the machine to bash's HOSTNAME" {
@@ -164,7 +177,7 @@ setup() {
 
     [ "$status" -eq 0 ]
     [ "$(cat "$HOSTNAME_ROOT/etc/hostname")" = "$HOSTNAME" ]
-    [ "$(calls hostname | tail -1)" = "$HOSTNAME" ]
+    [ "$(calls hostname | grep . | tail -1)" = "$HOSTNAME" ]
 }
 
 @test "09hostname exits without a name" {
@@ -175,4 +188,147 @@ setup() {
 
     [ "$status" -eq 0 ]
     [ -z "$(calls hostname)" ]
+}
+
+# --- the build name -------------------------------------------------------
+# The image is built on a host called core: common/conf/turnkey.d/
+# postfix-local sets myhostname to the build host's name, and /etc/mailname
+# has it too. On LXC, Proxmox names the machine before it boots, so the old
+# name hostname_set replaces is already the new one. On BR2, 2026-11-05, a
+# WordPress LXC kept "myhostname = core" and sent its mail From root@core.
+
+# build_image NAME
+# The scratch files as an image built on the host NAME has them.
+build_image() {
+    echo "$1" > "$HOSTNAME_ROOT/etc/mailname"
+    printf 'myhostname = %s\nmydestination = $myhostname, %s, localhost.localdomain, localhost\nsmtpd_banner = $myhostname ESMTP\n' "$1" "$1" \
+        > "$HOSTNAME_ROOT/etc/postfix/main.cf"
+    mkdir -p "$HOSTNAME_ROOT/etc/ssh"
+    echo "ssh-ed25519 AAAA root@$1" > "$HOSTNAME_ROOT/etc/ssh/ssh_host_ed25519_key.pub"
+}
+
+@test "hostname_adopt replaces the build name with the machine's name" {
+    source "$REPO/lib/hostname.sh"
+    stateful_hostname wp-br2
+    build_image core
+
+    hostname_adopt
+
+    [ "$(cat "$HOSTNAME_ROOT/etc/mailname")" = wp-br2 ]
+    [ "$(sed -n 1p "$HOSTNAME_ROOT/etc/postfix/main.cf")" = "myhostname = wp-br2" ]
+    [ "$(sed -n 2p "$HOSTNAME_ROOT/etc/postfix/main.cf")" = 'mydestination = $myhostname, wp-br2, localhost.localdomain, localhost' ]
+    [ "$(cat "$HOSTNAME_ROOT/etc/ssh/ssh_host_ed25519_key.pub")" = "ssh-ed25519 AAAA root@wp-br2" ]
+    # the kernel's name is not set: it is already the right one
+    [ "$(calls hostname)" = "" ]
+}
+
+@test "a dotted machine name is adopted whole" {
+    source "$REPO/lib/hostname.sh"
+    stateful_hostname wp.example.org
+    build_image core
+
+    hostname_adopt
+
+    [ "$(cat "$HOSTNAME_ROOT/etc/mailname")" = wp.example.org ]
+    [ "$(sed -n 1p "$HOSTNAME_ROOT/etc/postfix/main.cf")" = "myhostname = wp.example.org" ]
+}
+
+@test "the build name is the first label of a dotted mailname" {
+    source "$REPO/lib/hostname.sh"
+    stateful_hostname wp-br2
+    build_image core
+    echo core.localdomain > "$HOSTNAME_ROOT/etc/mailname"
+
+    hostname_adopt
+
+    [ "$(cat "$HOSTNAME_ROOT/etc/mailname")" = wp-br2.localdomain ]
+    [ "$(sed -n 1p "$HOSTNAME_ROOT/etc/postfix/main.cf")" = "myhostname = wp-br2" ]
+}
+
+@test "without a mailname the build name is postfix's myhostname" {
+    source "$REPO/lib/hostname.sh"
+    stateful_hostname wp-br2
+    build_image core
+    rm "$HOSTNAME_ROOT/etc/mailname"
+    stub postconf 'echo core.localdomain'
+
+    hostname_adopt
+
+    [ "$(calls postconf)" = "-c $HOSTNAME_ROOT/etc/postfix -h myhostname" ]
+    [ "$(sed -n 1p "$HOSTNAME_ROOT/etc/postfix/main.cf")" = "myhostname = wp-br2" ]
+}
+
+@test "a postconf that fails gives no build name" {
+    source "$REPO/lib/hostname.sh"
+    stateful_hostname wp-br2
+    build_image core
+    rm "$HOSTNAME_ROOT/etc/mailname"
+    stub postconf 'exit 1'
+    touch -d '2020-01-01' "$HOSTNAME_ROOT/etc/postfix/main.cf"
+
+    hostname_adopt
+
+    [ "$(stat -c %Y "$HOSTNAME_ROOT/etc/postfix/main.cf")" = "$(date -d '2020-01-01' +%s)" ]
+}
+
+@test "with neither a mailname nor postconf there is no build name" {
+    source "$REPO/lib/hostname.sh"
+    rm "$HOSTNAME_ROOT/etc/mailname"
+    # PATH has the stubs only, and there is no postconf stub
+    PATH=$STUBS run hostname_build_name
+
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "a machine that already has the build name touches no file" {
+    source "$REPO/lib/hostname.sh"
+    stateful_hostname core.example.org
+    build_image core
+    touch -d '2020-01-01' "$HOSTNAME_ROOT/etc/postfix/main.cf"
+
+    hostname_adopt
+
+    [ "$(stat -c %Y "$HOSTNAME_ROOT/etc/postfix/main.cf")" = "$(date -d '2020-01-01' +%s)" ]
+}
+
+@test "localhost is never taken for a build name" {
+    # replacing localhost would rewrite the loopback line of /etc/hosts
+    source "$REPO/lib/hostname.sh"
+    stateful_hostname wp-br2
+    echo localhost.localdomain > "$HOSTNAME_ROOT/etc/mailname"
+
+    hostname_adopt
+
+    [ "$(sed -n 1p "$HOSTNAME_ROOT/etc/hosts")" = "$(printf '127.0.0.1\tlocalhost')" ]
+    [ "$(cat "$HOSTNAME_ROOT/etc/mailname")" = localhost.localdomain ]
+}
+
+@test "09hostname without a preseed adopts the name Proxmox gave the LXC" {
+    stateful_hostname wp-br2
+    build_image core
+    echo wp-br2 > "$HOSTNAME_ROOT/etc/hostname"
+
+    # bash takes HOSTNAME from its environment: here the stub's name, as
+    # the bash of a machine has the machine's name
+    HOSTNAME=wp-br2 run "$REPO/firstboot.d/09hostname"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$HOSTNAME_ROOT/etc/mailname")" = wp-br2 ]
+    [ "$(sed -n 1p "$HOSTNAME_ROOT/etc/postfix/main.cf")" = "myhostname = wp-br2" ]
+    [ "$(cat "$HOSTNAME_ROOT/etc/hostname")" = wp-br2 ]
+}
+
+@test "09hostname with a preseeded name replaces the build name too" {
+    stateful_hostname wp-br2
+    build_image core
+    echo wp-br2 > "$HOSTNAME_ROOT/etc/hostname"
+    echo "export HOSTNAME=blog" > "$INITHOOKS_CONF"
+
+    run "$REPO/firstboot.d/09hostname"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$HOSTNAME_ROOT/etc/hostname")" = blog ]
+    [ "$(cat "$HOSTNAME_ROOT/etc/mailname")" = blog ]
+    [ "$(sed -n 1p "$HOSTNAME_ROOT/etc/postfix/main.cf")" = "myhostname = blog" ]
 }

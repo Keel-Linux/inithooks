@@ -22,7 +22,12 @@
 - `test-console.bats`: `lib/console.sh`, whether anybody can answer a first
   boot screen, and every hook that draws one, each run on a pty whose
   master is never read, with no size and with one, within a deadline: a
-  hook that asks fails instead of hanging.
+  hook that asks fails instead of hanging. It also tests
+  `console_deferred`, the record of the questions left to keel-init.
+- `test-fence-disable.bats`: `97turnkey-init-fence-disable`, whether the
+  first login starts keel-init: the fence stays up when a hook left a
+  question to keel-init, and keel-init takes it down and clears the
+  record.
 - `helpers.bash`: the stub helpers (`setup_stubs`, `stub`, `calls`), and
   `eventually` and `let_go` for tests that wait on another process.
 - `test_init_lock.py`: pytest tests of the first boot lock

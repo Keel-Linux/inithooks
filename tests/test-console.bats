@@ -34,6 +34,7 @@ setup() {
         echo "INITHOOKS_CONF=$INITHOOKS_CONF"
     } > "$INITHOOKS_DEFAULT"
     export INITHOOKS_LOGFILE=$BATS_TEST_TMPDIR/inithooks.log
+    export INITHOOKS_DEFERRED=$BATS_TEST_TMPDIR/deferred
     export CONSOLE_TIMEOUT=1
     export CONSOLE_ASK_TIMEOUT=1
     OUT=$BATS_TEST_TMPDIR/out
@@ -245,6 +246,69 @@ console_skipped 85secalerts 'no alert email'; echo went-on"
     [[ "$stderr" == "[85secalerts] not asked"* ]]
 }
 
+# --- questions left to keel-init ------------------------------------------
+# On BR2, 2026-11-05, a WordPress LXC nobody was attached to logged "keel-init
+# asks it" for the root password, and the first login opened confconsole:
+# nothing made the login start keel-init. A hook that leaves its question to
+# keel-init now records it, and 97turnkey-init-fence-disable reads the
+# record.
+
+@test "a deferred question says why, as a skipped one does, and is recorded" {
+    export INITHOOKS_UNATTENDED="the console has no size"
+
+    run --separate-stderr bash -c "source '$REPO/lib/console.sh'
+console_deferred 30rootpass 'keel-init asks it'"
+
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$stderr" = "[30rootpass] not asked, nobody can answer (the console has no size): keel-init asks it" ]
+    [ "$(cat "$INITHOOKS_LOGFILE")" = "INFO: $stderr" ]
+    [ "$(cat "$INITHOOKS_DEFERRED")" = 30rootpass ]
+}
+
+@test "the record has each hook once, in the order they deferred" {
+    export INITHOOKS_UNATTENDED="the console has no size"
+
+    run bash -c "source '$REPO/lib/console.sh'
+console_deferred 30rootpass one; console_deferred 35mysqlpass two
+console_deferred 30rootpass three"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$INITHOOKS_DEFERRED")" = "$(printf '30rootpass\n35mysqlpass')" ]
+}
+
+@test "the record directory is made when it is missing" {
+    export INITHOOKS_UNATTENDED="the console has no size"
+    export INITHOOKS_DEFERRED=$BATS_TEST_TMPDIR/var/lib/inithooks/deferred
+
+    run bash -c "source '$REPO/lib/console.sh'; console_deferred 30rootpass x"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$INITHOOKS_DEFERRED")" = 30rootpass ]
+}
+
+@test "a record that cannot be written is an error line, and the hook goes on" {
+    export INITHOOKS_UNATTENDED="the console has no size"
+    touch "$BATS_TEST_TMPDIR/file"
+    export INITHOOKS_DEFERRED=$BATS_TEST_TMPDIR/file/deferred
+
+    run --separate-stderr bash -c "set -e; source '$REPO/lib/console.sh'
+console_deferred 30rootpass 'keel-init asks it'; echo went-on"
+
+    [ "$status" -eq 0 ]
+    [ "$output" = went-on ]
+    [ "${stderr_lines[1]}" = "[30rootpass] cannot record the question in $INITHOOKS_DEFERRED: the first login does not start keel-init, run keel-init" ]
+    grep -qxF "ERROR: ${stderr_lines[1]}" "$INITHOOKS_LOGFILE"
+}
+
+@test "the record is /var/lib/inithooks/deferred on a machine" {
+    unset INITHOOKS_DEFERRED
+
+    run bash -c "source '$REPO/lib/console.sh'; echo \"\$INITHOOKS_DEFERRED\""
+
+    [ "$output" = /var/lib/inithooks/deferred ]
+}
+
 # --- the hooks ------------------------------------------------------------
 
 # hook_finishes SIZED HOOK
@@ -309,11 +373,24 @@ setup_reboot() {
 @test "30rootpass on a console with no size keeps the password" {
     setup_rootpass
     hook_finishes unsized 30rootpass
+    [ "$(cat "$INITHOOKS_DEFERRED")" = 30rootpass ]
 }
 
 @test "30rootpass on a sized console nobody reads keeps the password" {
     setup_rootpass
     hook_finishes sized 30rootpass
+    [ "$(cat "$INITHOOKS_DEFERRED")" = 30rootpass ]
+}
+
+@test "30rootpass leaves the password to keel-init and records it" {
+    # the hook as the package ships it, not a copy, so that kcov measures it
+    setup_rootpass
+
+    run --separate-stderr on_pty unsized "$REPO/firstboot.d/30rootpass"
+
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == "[30rootpass] not asked, nobody can answer"*"keel-init asks it" ]]
+    [ "$(cat "$INITHOOKS_DEFERRED")" = 30rootpass ]
 }
 
 @test "30rootpass with a preseeded password sets it without asking" {
@@ -329,6 +406,7 @@ setup_reboot() {
 
     [ "$status" -eq 0 ]
     [ "$(cat "$BATS_TEST_TMPDIR/setpass")" = "root --pass=Preseeded-123" ]
+    [ ! -e "$INITHOOKS_DEFERRED" ]
 }
 
 @test "31fqdn on a console with no size keeps the name" {
