@@ -311,16 +311,17 @@ console_deferred 30rootpass 'keel-init asks it'; echo went-on"
 
 # --- the hooks ------------------------------------------------------------
 
-# hook_finishes SIZED HOOK
+# hook_finishes SIZED HOOK [LINES]
 # Runs HOOK, a copy under INITHOOKS_PATH, on the console; it must end with
-# status 0 and leave its one line in the log.
+# status 0 and leave LINES lines in the log, one per step it runs (1 by
+# default; 75keel-role runs the mode step and the role step).
 hook_finishes() {
     # 99reboot is armed by 95secupdates, and ships not executable
     install -m 755 "$REPO/firstboot.d/$2" "$INITHOOKS_PATH/firstboot.d/$2"
     run --separate-stderr on_pty "$1" "$INITHOOKS_PATH/firstboot.d/$2"
     echo "$stderr" >&2
     [ "$status" -eq 0 ]
-    [ "$(grep -c "^INFO: \[$2\] not asked, nobody can answer" "$INITHOOKS_LOGFILE")" -eq 1 ]
+    [ "$(grep -c "^INFO: \[$2\] not asked, nobody can answer" "$INITHOOKS_LOGFILE")" -eq "${3:-1}" ]
 }
 
 setup_rootpass() {
@@ -423,12 +424,12 @@ setup_reboot() {
 
 @test "75keel-role on a console with no size asks nothing" {
     setup_keel
-    hook_finishes unsized 75keel-role
+    hook_finishes unsized 75keel-role 2
 }
 
 @test "75keel-role on a sized console nobody reads asks nothing" {
     setup_keel
-    hook_finishes sized 75keel-role
+    hook_finishes sized 75keel-role 2
 }
 
 @test "80keel-cloud on a console with no size asks nothing" {

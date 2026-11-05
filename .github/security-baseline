@@ -41,7 +41,6 @@ shellcheck:SC2148:lib/hostname.sh:78da85b80d36 shell lint, not a security risk: 
 shellcheck:SC2148:lib/init-fence.sh:cf746eead499 shell lint, not a security risk: a file meant to be sourced, with no shebang
 shellcheck:SC2148:lib/init-lock.sh:5e22b2fb5d28 shell lint, not a security risk: a file meant to be sourced, with no shebang
 shellcheck:SC2148:lib/ipconfig.sh:ba471210f14d shell lint, not a security risk: a file meant to be sourced, with no shebang
-shellcheck:SC2148:lib/keel-firstboot.sh:49133a3eb068 shell lint, not a security risk: a file meant to be sourced, with no shebang
 shellcheck:SC2148:lib/sslcert.sh:85830df6d566 shell lint, not a security risk: a file meant to be sourced, with no shebang
 shellcheck:SC2148:lib/tagid.sh:fc0b1cc391a6 shell lint, not a security risk: a file meant to be sourced, with no shebang
 shellcheck:SC2206:firstboot.d/05autogrow-fs:2bae7b9cf66c shell lint, not a security risk: unquoted array assignment over a value the script controls

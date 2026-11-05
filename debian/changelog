@@ -1,3 +1,32 @@
+inithooks (2.3.6+keel37) trixie; urgency=medium
+
+  * 75keel-role asks the installation mode, then the role (handbook
+    decision 0076): keelfirstboot.py mode, then keelfirstboot.py role.
+    The mode is not asked when the instance description declares
+    installation.mode; confconsole's step says so and exits 0.
+  * lib/keel-firstboot.sh: a step that has a question and no terminal
+    exits 75 (keelfirstboot.py DEFERRED). keel_firstboot then records
+    the question with console_deferred and returns 0, so the boot goes
+    on and the first login starts keel-init, which asks it. Any other
+    step with no terminal says it drew nothing (console_skipped), as
+    before.
+  * The login message says when a cloud node still needs a join:
+    keel-init --status prints one line when the description says
+    cloud_simple or cloud_advanced and has no overlay address, or an
+    overlay with no peer (libinithooks/mesh_pending.py).
+  * Recommends confconsole (>= 2.2.3+keel21~), and Breaks confconsole
+    (<< 2.2.3+keel21~): an older keelfirstboot.py does not know the mode
+    step, and 75keel-role would stop there. A versioned Recommends alone
+    does not stop an upgrade that keeps the older confconsole.
+  * lib/keel-firstboot.sh names its shell (shellcheck shell=bash), so
+    shellcheck's SC2148 goes, and its baseline entry with it.
+  * tests: test-keel-firstboot.bats (6 new, 2 changed),
+    test_mesh_pending.py (11); test-console.bats expects one log line
+    per step of 75keel-role (two),
+    a keel-init --status test in test_init_lock.py.
+
+ -- Keel Linux maintainers <admin@keellinux.org>  Thu, 05 Nov 2026 22:00:00 +0000
+
 inithooks (2.3.6+keel36) trixie; urgency=medium
 
   * The first login starts keel-init when the headless first boot left a

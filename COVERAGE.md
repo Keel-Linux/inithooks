@@ -4,6 +4,18 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch feat/decision-0076-mode-step: shell 99.74, Python 99 (2026-11-05)
+
+`firstboot.d/75keel-role` (5 of 5 lines) and `lib/keel-firstboot.sh` (21
+of 21) stay at 100 percent: `tests/test-keel-firstboot.bats` runs the
+mode step before the role step, the deferral to keel-init when a step
+exits 75 (attended or not), a preseeded mode that leaves nothing to
+keel-init, and a mode step that fails. The new
+`libinithooks/mesh_pending.py` is at 100 percent (29 statements, 6
+branches; `tests/test_mesh_pending.py`, 11 tests), and
+`tests/test_init_lock.py` runs it through `keel-init --status`. Totals
+unchanged: shell 99.74 (768 of 770), Python 99; 609 passed.
+
 ## Branch fix/first-login-keel-init: shell 99.74 (2026-11-05)
 
 `lib/console.sh` (console_deferred, 40 of 40 lines),

@@ -33,6 +33,9 @@
 - `test_init_lock.py`: pytest tests of the first boot lock
   (`libinithooks/init_lock.py`), of `keel-init` and its `turnkey-init`
   link, and of `keel-init` against a real `run` waiting in a hook.
+- `test_mesh_pending.py`: pytest tests of `libinithooks/mesh_pending.py`,
+  the line `keel-init --status` gives for a cloud node that still needs a
+  join (decision 0076).
 - `coverage.sh`: runs the bats tests under kcov and fails when a measured
   file is below 95 percent of executed lines.
 - `test_declarative*.py`: pytest tests of `libinithooks/declarative.py` and

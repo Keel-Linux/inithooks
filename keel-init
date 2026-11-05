@@ -34,7 +34,7 @@ import sys
 from conffile import ConfFile
 import subprocess
 
-from libinithooks import init_lock
+from libinithooks import init_lock, mesh_pending
 
 
 def prog():
@@ -134,6 +134,12 @@ def status():
     if fence_up():
         print("    This system is not initialized yet: run keel-init to"
               " set it up.")
+        print()
+    # a cloud node that still needs a join (decision 0076): the mesh
+    # steps were left, or nobody could answer them at the first boot
+    line = mesh_pending.message()
+    if line:
+        print("    " + line)
         print()
     sys.exit(0)
 
