@@ -89,6 +89,8 @@ def keel_init(tmp_path, monkeypatch):
     monkeypatch.setenv("INITHOOKS_COMPLETE", str(complete))
     # no instance description, unless a test writes one
     monkeypatch.setenv("KEEL_SPEC", str(tmp_path / "instance.yaml"))
+    # the record of the questions left to keel-init, a scratch path
+    monkeypatch.setenv("INITHOOKS_DEFERRED", str(tmp_path / "deferred"))
     stub = types.ModuleType("conffile")
     exec(CONFFILE_STUB, stub.__dict__)
     monkeypatch.setitem(sys.modules, "conffile", stub)
@@ -620,6 +622,32 @@ def test_keel_init_runs_the_hooks_holding_the_lock(keel_init, lock, tmp_path):
     keel_init.main()
     assert seen.read_text() == "held\n"
     assert init_lock.in_progress(lock) is None
+
+
+def test_keel_init_empties_the_record_before_its_hooks(
+    keel_init, lock, tmp_path
+):
+    # what the record holds after the run is what this run left again,
+    # which 97turnkey-init-fence-disable keeps the fence up for
+    record = tmp_path / "deferred"
+    record.write_text("30rootpass\n")
+    seen = tmp_path / "seen"
+    hook(keel_init.firstboot, "01probe",
+         f"test -e '{record}' && echo there >> '{seen}'; echo 75keel-role"
+         f" >> '{record}'; true")
+    keel_init.main()
+    assert not seen.exists()
+    assert record.read_text() == "75keel-role\n"
+
+
+def test_keel_init_with_no_record_runs_as_before(keel_init, lock, tmp_path):
+    keel_init.main()
+    assert not (tmp_path / "deferred").exists()
+
+
+def test_the_record_is_inithooks_own_by_default(keel_init, monkeypatch):
+    monkeypatch.delenv("INITHOOKS_DEFERRED")
+    assert keel_init.DEFERRED == "/var/lib/inithooks/deferred"
 
 
 def test_keel_init_describes_itself_in_the_lock(keel_init, lock, tmp_path):

@@ -70,6 +70,9 @@ def usage(e=None):
 
 # deprecated: hooks can use _TURNKEY_INIT to detect if they're running under
 # keel-init
+# lib/console.sh INITHOOKS_DEFERRED: the questions a hook left to keel-init
+DEFERRED = "/var/lib/inithooks/deferred"
+
 BLACKLIST = ['15regen-sslcert',
              '92etckeeper', ]
 
@@ -149,6 +152,14 @@ def refuse(message):
     sys.exit(init_lock.EXIT_BUSY)
 
 
+def clear_deferred():
+    """Empty the record of the questions left to keel-init"""
+    try:
+        os.remove(os.environ.get("INITHOOKS_DEFERRED", DEFERRED))
+    except FileNotFoundError:
+        pass
+
+
 def take_lock(boot_run):
     """The lock, for keel-init's own hooks; or, while the first boot is
     pending, a refusal or the boot run BOOT_RUN in keel-init's place"""
@@ -207,6 +218,10 @@ def main():
 
     inithooks = InitHooks()
     lock = take_lock(os.path.join(inithooks.conf.inithooks_path, 'run'))
+    # this run asks every question the boot run left (lib/console.sh,
+    # console_deferred): what the record holds after it is what this run
+    # left again, which 97turnkey-init-fence-disable keeps the fence for
+    clear_deferred()
     inithooks.execute('firstboot.d')
     # confconsole stays open for as long as the operator wants it: the run
     # is over, and the next one must not be refused because of it

@@ -52,8 +52,9 @@ keel_firstboot() {
     fi
     python3 "$KEEL_FIRSTBOOT" "$step" || status=$?
     if [[ $status -eq $KEEL_FIRSTBOOT_DEFERRED ]]; then
-        # the screen found no terminal it could draw on after all
-        console_deferred "$(basename "$0")" "confconsole's $step screen found no terminal: keel-init asks it"
+        # the screen found no terminal it could draw on after all, or
+        # the operator quit it with ESC: the question is not dropped
+        console_deferred "$(basename "$0")" "confconsole's $step screen was not answered: keel-init asks it"
         return 0
     fi
     return "$status"
