@@ -7,7 +7,11 @@
 #
 # - keel-init run (_TURNKEY_INIT): keel-init has asked its questions, so
 #   the fence goes down for good, and the record of the questions left to
-#   keel-init (console_deferred, lib/console.sh) is cleared.
+#   keel-init (console_deferred, lib/console.sh) is cleared. keel-init
+#   empties the record before its hooks run, so what the record holds now
+#   is a question this run left again (ESC on the installation mode,
+#   BR1 2026-11-06): then the fence stays up, as in a boot run, and the
+#   next login starts keel-init.
 # - boot run, AUTO_RUN set: 30turnkey-init-fence armed the profile fence;
 #   the fence stays up, as before.
 # - boot run, a hook left a question to keel-init: the profile fence is
@@ -56,7 +60,9 @@ arm_profile_fence() {
     fi
 }
 
-if [[ -n "${_TURNKEY_INIT:-}" ]]; then
+if [[ -n "${_TURNKEY_INIT:-}" ]] && [[ -s "$INITHOOKS_DEFERRED" ]]; then
+    arm_profile_fence
+elif [[ -n "${_TURNKEY_INIT:-}" ]]; then
     # ONLY run this from within keel-init
     for home in "$FENCE_ROOT/root" "$FENCE_ROOT/home/admin"; do
         if [[ -e "$home/$PROFILE_FENCE" ]]; then

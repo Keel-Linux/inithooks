@@ -127,7 +127,8 @@ fence_disabled() {
     chmod +x "$ROOT_FENCE"
     mkdir -p "${ADMIN_FENCE%/*}"
     install -m 755 /dev/null "$ADMIN_FENCE"
-    echo 30rootpass > "$INITHOOKS_DEFERRED"
+    # keel-init emptied the record before its hooks ran
+    : > "$INITHOOKS_DEFERRED"
 
     run "$HOOK"
 
@@ -149,4 +150,20 @@ fence_disabled() {
 
     [ "$status" -eq 0 ]
     fence_disabled
+}
+
+@test "a question keel-init's own run left again keeps the fence up" {
+    # BR1, 2026-11-06: ESC on the installation mode under keel-init left
+    # the node with no mode; the next login must start keel-init again
+    export _TURNKEY_INIT=1
+    echo 75keel-role > "$INITHOOKS_DEFERRED"
+
+    run "$HOOK"
+
+    [ "$status" -eq 0 ]
+    [ -z "$(calls systemctl)" ]
+    [ -x "$ROOT_FENCE" ]
+    [ -x "$INITHOOKS_PATH/firstboot.d/97turnkey-init-fence-disable" ]
+    [ "$(cat "$INITHOOKS_DEFERRED")" = 75keel-role ]
+    [ "$output" = "turnkey-init-fence stays up: the first login starts keel-init, which asks what 75keel-role left" ]
 }

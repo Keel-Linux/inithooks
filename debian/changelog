@@ -1,3 +1,24 @@
+inithooks (2.3.6+keel38) trixie; urgency=medium
+
+  * A question that a keel-init run leaves again is kept for the next
+    login. On BR1, 2026-11-06, ESC on the installation mode under
+    keel-init left the node with no mode, and the run ended with the
+    fence down. keel-init now empties the record of deferred questions
+    (/var/lib/inithooks/deferred) before its hooks run, and
+    97turnkey-init-fence-disable, in a keel-init run, keeps the fence up
+    and arms the profile fence when the record is not empty: only this
+    run can have written it. With an empty record it takes the fence
+    down, as before.
+  * lib/keel-firstboot.sh: a step that exits 75 on a terminal (the
+    operator quit it with ESC, confconsole 2.2.3+keel22) is recorded as
+    "was not answered: keel-init asks it".
+  * Recommends confconsole (>= 2.2.3+keel22~), which shows the invite
+    line on the primary and asks the mode again after ESC.
+  * tests: test-fence-disable.bats (1 new, 1 changed), test_init_lock.py
+    (3 new).
+
+ -- Keel Linux maintainers <admin@keellinux.org>  Fri, 06 Nov 2026 12:00:00 +0000
+
 inithooks (2.3.6+keel37) trixie; urgency=medium
 
   * 75keel-role asks the installation mode, then the role (handbook
