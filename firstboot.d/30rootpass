@@ -12,6 +12,25 @@
 # first login starts keel-init, which asks it.
 
 USERNAME=root
+# Written by firstboot.d/02cloud-drive when the cloud-init drive set the
+# root password: then nothing asks it again, not the boot run and not
+# keel-init (maintainer decision 2026-11-26, the infrastructure
+# administrator decided it).
+# The record names the instance-id it was set for (its first line), and
+# counts only while that is the instance-id the machine applied last
+# (CLOUD_DRIVE_STATE): a VM made from a template of a booted VM applies its
+# own instance-id, and is asked.
+CLOUD_DRIVE_PASSWORD="${CLOUD_DRIVE_PASSWORD:-/var/lib/inithooks/cloud-drive/root-password}"
+CLOUD_DRIVE_STATE="${CLOUD_DRIVE_STATE:-/var/lib/inithooks/cloud-drive/instance-id}"
+
+# password_from_drive: the drive set the root password of this instance
+password_from_drive() {
+    local set_for applied
+    [ -e "$CLOUD_DRIVE_PASSWORD" ] && [ -e "$CLOUD_DRIVE_STATE" ] || return 1
+    read -r set_for < "$CLOUD_DRIVE_PASSWORD" || return 1
+    read -r applied < "$CLOUD_DRIVE_STATE" || return 1
+    [ -n "$set_for" ] && [ "$set_for" = "$applied" ]
+}
 
 INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
 # shellcheck source=default/inithooks
@@ -23,6 +42,11 @@ INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
 
 # shellcheck disable=SC1090
 [ -e "$INITHOOKS_CONF" ] && . "$INITHOOKS_CONF"
+
+if [ "$USERNAME" = root ] && password_from_drive; then
+    console_log INFO "[30rootpass] not asked: the root password was set from the cloud-init drive"
+    exit 0
+fi
 
 if [ -z "$ROOT_PASS" ] && console_unattended; then
     console_deferred 30rootpass "the $USERNAME password stays as the machine has it (pct create --password, or locked); keel-init asks it"

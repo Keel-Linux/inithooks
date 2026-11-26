@@ -17,6 +17,10 @@ Options:
     --hosts         write the name given with --hostname and --fqdn into
                     the hosts file, and ask nothing
     --hostname=     with --record or --hosts: the hostname
+    --forget-tls    remove tls.acme.domains from the instance description
+                    (and set tls.acme.enabled to false when it is true),
+                    and ask nothing: a clone forgets the certificate domain
+                    of the original, so that keel-init asks it again
     --machine       print the name the machine has, given with --current,
                     the way an answer is printed, and ask nothing: its
                     domain is the one its line in the hosts file gives it
@@ -119,6 +123,23 @@ def record(hostname: str, name: str) -> None:
         fatal(e)
 
 
+def forget_tls() -> None:
+    """The description without the certificate domain, unless it has none"""
+    path, document = load_description()
+    after = fqdn.without_acme_domains(document)
+    if after == document:
+        print(f"fqdn: {path} declares no certificate domain, not written",
+              file=sys.stderr)
+        return
+    try:
+        fqdn.write_spec(path, after)
+    except fqdn.FqdnError as e:
+        fatal(e)
+    domains = document["tls"]["acme"]["domains"]
+    print(f"fqdn: the certificate domain {domains} was removed from {path}:"
+          " keel-init asks the name again", file=sys.stderr)
+
+
 def machine(current: str) -> None:
     """Print the name the machine has, as an answer is printed"""
     try:
@@ -141,7 +162,7 @@ def main():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
         l_opts = ["help", "fqdn=", "current=", "record", "hosts",
-                  "hostname=", "machine"]
+                  "hostname=", "machine", "forget-tls"]
         opts, args = getopt.gnu_getopt(sys.argv[1:], "h", l_opts)
     except getopt.GetoptError as e:
         usage(e)
@@ -163,6 +184,9 @@ def main():
         else:  # --record, --hosts or --machine, which ask nothing
             action = opt
 
+    if action == "--forget-tls":
+        forget_tls()
+        return
     if action == "--machine":
         if not current:
             usage("--machine needs --current")

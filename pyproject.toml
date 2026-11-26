@@ -4,10 +4,12 @@ testpaths = ["tests"]
 [tool.coverage.run]
 branch = true
 include = [
+    "libinithooks/cloud_drive.py",
     "libinithooks/declarative.py",
     "libinithooks/dialog_wrapper.py",
     "libinithooks/fqdn.py",
     "libinithooks/init_lock.py",
+    "bin/cloud-drive.py",
     "bin/declarative.py",
     "bin/fqdn.py",
 ]

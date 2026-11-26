@@ -1,3 +1,65 @@
+inithooks (2.3.6+keel40) trixie; urgency=medium
+
+  * firstboot.d/02cloud-drive reads the Proxmox cloud-init drive of a VM
+    without the cloud-init package (maintainer decision 2026-11-26), so
+    the operator can log in over SSH with a key on the first boot. The
+    drive (label cidata, CIDATA or config-2) is found with blkid and
+    mounted read-only (iso9660 or vfat, nosuid, nodev, noexec). It is
+    read only on a QEMU/KVM VM (systemd-detect-virt --vm), from a device
+    that is not on USB, and only when exactly one device has a label.
+    No path part on the drive is followed as a symbolic link, and a YAML
+    document with anchors or aliases is refused (alias bombs). Only ssh_authorized_keys,
+    password, hostname, fqdn and the instance-id are used, each
+    validated: the keys go to root's authorized_keys, the password is set
+    by chpasswd (-e for a hash) and ROOT_PASS=KEEP is added to the
+    inithooks conf, and FQDN= or HOSTNAME= is added for 09hostname and
+    31fqdn. A preseed or the instance description wins. runcmd, bootcmd,
+    write_files, packages and every other key are ignored and named in
+    the journal; nothing from the drive is run. The network
+    configuration is not applied; the journal says which static
+    addresses it asks for.
+  * With an SSH key from the drive, the boot run asks nothing on the
+    console (lib/console.sh, INITHOOKS_SSH_ANSWER): the questions go to
+    keel-init, which the first SSH login starts. Before, the boot run
+    held the first boot lock on the VM console, and keel-init over SSH
+    was refused.
+  * everyboot.d/02cloud-drive: on a machine born from a drive (an
+    instance-id recorded at the first boot), a new instance-id (a clone,
+    or a changed cloud-init setting) adds the SSH keys. Bare metal, an
+    ISO install or a VM first booted without a drive reads nothing, so a
+    USB stick and a power cycle do not give root an SSH key. The machine is renamed as
+    31fqdn does only when the drive's name changed since the last
+    instance-id, so a new key does not undo a name given in keel-init.
+    The instance-id and the drive's name are kept in
+    /var/lib/inithooks/cloud-drive/instance-id.
+  * When the cloud-init drive set the root password, nothing asks it
+    again: 02cloud-drive records it in
+    /var/lib/inithooks/cloud-drive/root-password with the instance-id,
+    and 30rootpass skips the root password while that is the instance-id
+    applied last, in the boot run and in keel-init (maintainer decision
+    2026-11-26). A key added in Proxmox (the same name) carries the
+    record to the new instance-id; a clone or a VM from a template of a
+    booted VM is asked. The domain question stays.
+  * 99reboot: the reboot for a new kernel waits while an SSH session is
+    open or keel-init runs (lib/reboot-wait.sh, bin/reboot-when-idle, a
+    transient unit inithooks-reboot-when-idle). The updates are installed
+    before. With nothing open it reboots at once, as before. An SSH
+    session or keel-init holds the reboot for at most 6 hours
+    (REBOOT_WAIT_MAX=21600), and the log says what was still open. Only
+    root's sshd session processes and keel-init count. Depends on procps
+    (pgrep).
+  * A clone that is renamed from its drive loses the certificate domain
+    of the original: bin/fqdn.py --forget-tls removes tls.acme.domains
+    from the instance description (tls.acme.enabled goes to false when it
+    was true, which keel spec apply needs) through the same keel spec
+    validate path as 31fqdn, so that keel-init asks the name again.
+  * tests: test-cloud-drive.bats (21), test-reboot-wait.bats (9),
+    test_cloud_drive.py (44), test_cloud_drive_cli.py (26), test_fqdn.py
+    (3 new), test_fqdn_cli.py (3 new), test-console.bats (a pgrep stub).
+    tests/coverage.sh also measures everyboot.d.
+
+ -- Keel Linux maintainers <admin@keellinux.org>  Thu, 26 Nov 2026 12:00:00 +0000
+
 inithooks (2.3.6+keel39) trixie; urgency=medium
 
   * inithooks#68: the init fence writes nftables, in its own table

@@ -5,15 +5,15 @@
 #
 # usage: tests/coverage.sh [OUTDIR]
 #
-# Needs bats and kcov. Only files under lib/, firstboot.d/ and bin/ are
-# measured; the tests and the stubs they write are not.
+# Needs bats and kcov. Only files under lib/, firstboot.d/, everyboot.d/
+# and bin/ are measured; the tests and the stubs they write are not.
 
 THRESHOLD=${COVERAGE_THRESHOLD:-95}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 OUTDIR=${1:-$REPO/coverage}
 
 rm -rf "$OUTDIR"
-kcov --include-path="$REPO/lib,$REPO/firstboot.d,$REPO/bin" \
+kcov --include-path="$REPO/lib,$REPO/firstboot.d,$REPO/everyboot.d,$REPO/bin" \
     --exclude-path="$REPO/tests" \
     "$OUTDIR" bats "$REPO/tests"
 
