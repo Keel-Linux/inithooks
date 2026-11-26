@@ -1,0 +1,25 @@
+# keel's enforce ruleset for a web appliance with sshd on 22 while the
+# init fence is enabled: keel.manifest.firewall.render of keel 391f067
+# (keel PR 339), ports 22, 80, 443 and 12321 public, fence 60080 60443.
+#!/usr/sbin/nft -f
+# written by keel spec apply --system from the appliance manifests
+# (handbook decision 0041): the public and mesh ports of every
+# process whose overlay is enabled; a change made here is overwritten
+# state: enforce
+table inet keel
+delete table inet keel
+table inet keel {
+	comment "keel-manifest 74f45223117ffd39"
+	chain input {
+		type filter hook input priority filter; policy drop;
+		iif "lo" accept
+		ct state established,related accept
+		ct state invalid drop
+		meta l4proto ipv6-icmp accept
+		icmp type echo-request accept
+		ip6 saddr fe80::/10 udp dport 546 accept
+		udp dport 68 accept
+		tcp dport { 22, 80, 443, 12321 } accept
+		ct status dnat tcp dport { 60080, 60443 } accept
+	}
+}

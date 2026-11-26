@@ -2,12 +2,61 @@
 
 set -e
 
+# fence_early_drop: loads the drop of the fence of this version (the table
+# inet keel_fence of lib/init-fence.sh, input chain only) before the old
+# fence stops, so that the ports stay fenced while dpkg unpacks: the first
+# boot's security update of an older image runs while the wizard waits.
+# The ports come from the defaults file, checked as lib/init-fence.sh
+# fence_check_ports checks them. It never fails the upgrade.
+fence_early_drop() {
+    if ! command -v nft >/dev/null 2>&1; then
+        echo "inithooks: no nft; the ports are open until postinst starts the fence" >&2
+        return 0
+    fi
+    # shellcheck disable=SC2016  # bash expands it, not sh
+    ports=$(bash -c '
+        HTTP_PORTS=()
+        HTTPS_PORTS=()
+        if [[ -r "$1" ]]; then
+            . "$1" >/dev/null 2>&1 || true
+        fi
+        ok() {
+            local port
+            (( $# > 0 )) || return 1
+            for port in "$@"; do
+                [[ "$port" =~ ^[0-9]{1,5}$ ]] \
+                    && (( 10#$port >= 1 && 10#$port <= 65535 )) || return 1
+            done
+        }
+        ok "${HTTP_PORTS[@]}" || HTTP_PORTS=(80)
+        ok "${HTTPS_PORTS[@]}" || HTTPS_PORTS=(443 12321 12322)
+        out=
+        for port in "${HTTP_PORTS[@]}" "${HTTPS_PORTS[@]}"; do
+            out="$out${out:+, }$((10#$port))"
+        done
+        echo "$out"' _ /etc/default/turnkey-init-fence)
+    printf 'table inet keel_fence\ndelete table inet keel_fence\ntable inet keel_fence {\n\tchain input {\n\t\ttype filter hook input priority filter - 5; policy accept;\n\t\tiifname != "lo" tcp dport { %s } drop\n\t}\n}\n' "$ports" \
+        | nft -f - \
+        || echo "inithooks: cannot load the fence's drop table; the ports are open until postinst starts the fence" >&2
+}
+
 if [ "$1" = "upgrade" ]; then
     for service in inithooks turnkey-init-fence; do
         if systemctl is-active -q "$service.service"; then
             touch "/run/$service-was-active"
         fi
     done
+    # Up to 2.3.6+keel38 the fence wrote iptables rules, and the stop of
+    # this version removes only its nftables table (inithooks#68). A fence
+    # that runs stops here, with the script of the old version, after the
+    # drop of the new one is loaded. postinst starts the fence on nftables,
+    # which loads the drop again in one transaction and adds the redirect;
+    # postrm removes the drop when the upgrade is aborted.
+    if dpkg --compare-versions "$2" lt "2.3.6+keel39~" \
+            && [ -f /run/turnkey-init-fence-was-active ]; then
+        fence_early_drop
+        systemctl stop turnkey-init-fence.service || true
+    fi
 fi
 
 #DEBHELPER#
