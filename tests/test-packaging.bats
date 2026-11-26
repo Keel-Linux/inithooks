@@ -194,7 +194,7 @@ getty_answers() {
     cat) [[ " ${GETTY_UNITS-} " == *" $2 "* ]] ;;
     is-enabled) [ -n "${FENCE_ENABLED-}" ] ;;
     is-failed) [ -n "${FENCE_FAILED-}" ] ;;
-    restart) [ "$2" != turnkey-init-fence.service ] || exit "${FENCE_START:-0}" ;;
+    start|restart) [ "$2" != turnkey-init-fence.service ] || exit "${FENCE_START:-0}" ;;
     *) exit 0 ;;
 esac'
 }
@@ -298,11 +298,27 @@ upgrade_postinst() {
 preinst_copy() {
     load helpers
     setup_stubs
-    stub systemctl 'case "$1" in
+    stub systemctl 'echo "systemctl $*" >> "'"$STUBS"'/order"
+case "$1" in
     is-active) [ "$3" = turnkey-init-fence.service ] && [ -n "${FENCE_ACTIVE-}" ] ;;
     *) exit 0 ;;
 esac'
-    sed "s|/run/|$BATS_TEST_TMPDIR/|g" "$REPO/debian/preinst" > "$BATS_TEST_TMPDIR/preinst"
+    stub_order_nft
+    FENCE_DEFAULTS=$BATS_TEST_TMPDIR/default-turnkey-init-fence
+    printf '%s\n' 'HTTP_PORTS=(80)' 'HTTPS_PORTS=(443 12321 12322)' > "$FENCE_DEFAULTS"
+    sed -e "s|/run/|$BATS_TEST_TMPDIR/|g" \
+        -e "s|/etc/default/turnkey-init-fence|$FENCE_DEFAULTS|g" \
+        "$REPO/debian/preinst" > "$BATS_TEST_TMPDIR/preinst"
+}
+
+# stub_order_nft: nft records "nft", then the script it got, in the file
+# order, which the systemctl stubs here also write; NFT_STATUS is its exit
+stub_order_nft() {
+    stub nft '{ echo nft; cat; } >> "'"$STUBS"'/order"; exit "${NFT_STATUS:-0}"'
+}
+
+order() {
+    cat "$STUBS/order" 2>/dev/null || true
 }
 
 @test "an upgrade from the iptables fence stops the running fence before the files change" {
@@ -312,6 +328,66 @@ esac'
     [ "$status" -eq 0 ]
     grep -qx "stop turnkey-init-fence.service" "$STUBS/systemctl.calls"
     [ -e "$BATS_TEST_TMPDIR/turnkey-init-fence-was-active" ]
+}
+
+# The first boot's security update of an older image upgrades inithooks
+# while the wizard waits: the ports must stay fenced while dpkg unpacks.
+@test "an upgrade from the iptables fence loads the drop before it stops the old fence" {
+    preinst_copy
+    export FENCE_ACTIVE=yes
+    run sh "$BATS_TEST_TMPDIR/preinst" upgrade 2.3.6+keel38
+    [ "$status" -eq 0 ]
+    [ "$(order | grep -v is-active)" = "$(printf '%s\n' nft \
+        'table inet keel_fence' \
+        'delete table inet keel_fence' \
+        'table inet keel_fence {' \
+        '	chain input {' \
+        '		type filter hook input priority filter - 5; policy accept;' \
+        '		iifname != "lo" tcp dport { 80, 443, 12321, 12322 } drop' \
+        '	}' \
+        '}' \
+        'systemctl stop turnkey-init-fence.service')" ]
+}
+
+@test "the early drop reads the ports of the defaults file" {
+    preinst_copy
+    export FENCE_ACTIVE=yes
+    printf '%s\n' 'HTTP_PORTS=(8080)' 'HTTPS_PORTS=(8443 9443)' > "$FENCE_DEFAULTS"
+    run sh "$BATS_TEST_TMPDIR/preinst" upgrade 2.3.6+keel38
+    [ "$status" -eq 0 ]
+    order | grep -qx '		iifname != "lo" tcp dport { 8080, 8443, 9443 } drop'
+}
+
+@test "the early drop fences the default ports for empty or invalid lists" {
+    preinst_copy
+    export FENCE_ACTIVE=yes
+    printf '%s\n' 'HTTP_PORTS=()' 'HTTPS_PORTS=(443 "1;x")' > "$FENCE_DEFAULTS"
+    run sh "$BATS_TEST_TMPDIR/preinst" upgrade 2.3.6+keel38
+    [ "$status" -eq 0 ]
+    order | grep -qx '		iifname != "lo" tcp dport { 80, 443, 12321, 12322 } drop'
+    rm "$FENCE_DEFAULTS" "$STUBS/order"
+    run sh "$BATS_TEST_TMPDIR/preinst" upgrade 2.3.6+keel38
+    [ "$status" -eq 0 ]
+    order | grep -qx '		iifname != "lo" tcp dport { 80, 443, 12321, 12322 } drop'
+}
+
+@test "an early drop that nft refuses does not stop the upgrade" {
+    preinst_copy
+    export FENCE_ACTIVE=yes NFT_STATUS=1
+    run sh "$BATS_TEST_TMPDIR/preinst" upgrade 2.3.6+keel38
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"inithooks: cannot load the fence's drop table; the ports are open until postinst starts the fence"* ]]
+    grep -qx "stop turnkey-init-fence.service" "$STUBS/systemctl.calls"
+}
+
+@test "with no nft the old fence still stops, and the upgrade goes on" {
+    preinst_copy
+    export FENCE_ACTIVE=yes
+    rm "$STUBS/nft"
+    PATH=$STUBS:/usr/bin:/bin run sh "$BATS_TEST_TMPDIR/preinst" upgrade 2.3.6+keel38
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"inithooks: no nft; the ports are open until postinst starts the fence"* ]]
+    grep -qx "stop turnkey-init-fence.service" "$STUBS/systemctl.calls"
 }
 
 @test "an upgrade from the nftables fence stops no unit" {
@@ -338,11 +414,14 @@ fence_postinst() {
         "$BATS_TEST_TMPDIR/postinst"
 }
 
+# start, not restart: a restart stops the new fence first, and its stop
+# removes the drop that preinst loaded
 @test "an upgrade starts the fence again when it ran, also with inithooks down" {
     fence_postinst
     touch "$BATS_TEST_TMPDIR/turnkey-init-fence-was-active"
     upgrade_postinst
-    grep -qx "restart turnkey-init-fence.service" "$STUBS/systemctl.calls"
+    grep -qx "start turnkey-init-fence.service" "$STUBS/systemctl.calls"
+    run ! grep -q "^restart turnkey-init-fence" "$STUBS/systemctl.calls"
     [ ! -e "$BATS_TEST_TMPDIR/turnkey-init-fence-was-active" ]
 }
 
@@ -396,4 +475,53 @@ fence_postinst() {
 @test "the package installs the nftables drop-in under /usr/lib/systemd/system" {
     grep -Eq '^systemd/nftables\.service\.d/\*[[:space:]]+/usr/lib/systemd/system/nftables\.service\.d$' \
         "$REPO/debian/inithooks.install"
+}
+
+# dpkg runs "new-postrm abort-upgrade OLD" when the unpack fails after
+# preinst: the drop that preinst loaded goes, and the fence that preinst
+# stopped starts again from the files on disk.
+postrm_copy() {
+    load helpers
+    setup_stubs
+    stub systemctl 'echo "systemctl $*" >> "'"$STUBS"'/order"; exit "${FENCE_START:-0}"'
+    stub_order_nft
+    sed "s|/run/|$BATS_TEST_TMPDIR/|g" "$REPO/debian/postrm" > "$BATS_TEST_TMPDIR/postrm"
+}
+
+@test "an aborted upgrade removes the early drop and starts the fence again" {
+    postrm_copy
+    touch "$BATS_TEST_TMPDIR/turnkey-init-fence-was-active"
+    run sh "$BATS_TEST_TMPDIR/postrm" abort-upgrade 2.3.6+keel38
+    [ "$status" -eq 0 ]
+    [ "$(order)" = "$(printf '%s\n' nft 'table inet keel_fence' \
+        'delete table inet keel_fence' 'systemctl start turnkey-init-fence.service')" ]
+}
+
+@test "an aborted upgrade with the fence down touches nothing" {
+    postrm_copy
+    run sh "$BATS_TEST_TMPDIR/postrm" abort-upgrade 2.3.6+keel38
+    [ "$status" -eq 0 ]
+    [ -z "$(order)" ]
+}
+
+@test "an aborted upgrade from the nftables fence touches nothing" {
+    postrm_copy
+    touch "$BATS_TEST_TMPDIR/turnkey-init-fence-was-active"
+    run sh "$BATS_TEST_TMPDIR/postrm" abort-upgrade 2.3.6+keel39
+    [ "$status" -eq 0 ]
+    [ -z "$(order)" ]
+}
+
+@test "an aborted upgrade does not fail when the fence does not start" {
+    postrm_copy
+    touch "$BATS_TEST_TMPDIR/turnkey-init-fence-was-active"
+    export FENCE_START=1 NFT_STATUS=1
+    run sh "$BATS_TEST_TMPDIR/postrm" abort-upgrade 2.3.6+keel38
+    [ "$status" -eq 0 ]
+}
+
+@test "the packaged postrm keeps its own steps around the snippet" {
+    packaged_scripts
+    grep -q 'abort-upgrade' "$DEBIAN/postrm"
+    tail -n 1 "$DEBIAN/postrm" | grep -qx 'exit 0'
 }

@@ -55,7 +55,9 @@ if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] \
         if [ -f "$fence_marker" ] \
                 && dpkg --compare-versions "$2" lt "2.3.6+keel39~"; then
             rm -f "$fence_marker"
-            systemctl restart turnkey-init-fence.service \
+            # start, not restart: the new stop would remove the drop that
+            # preinst loaded, and open the ports until the start
+            systemctl start turnkey-init-fence.service \
                 || echo "inithooks: turnkey-init-fence did not start, see its journal" >&2
         elif [ -f "$fence_marker" ]; then
             rm -f "$fence_marker"

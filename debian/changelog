@@ -27,6 +27,15 @@ inithooks (2.3.6+keel39) trixie; urgency=medium
     nftables restarts the unit, also in the first boot's security update.
   * stop_mini_server succeeds with an empty or stale pid file, which a
     mini server that did not start leaves.
+  * The upgrade from 2.3.6+keel38 or earlier keeps the ports fenced while
+    dpkg unpacks: preinst loads the drop of the new fence before it stops
+    the old one, and postinst starts (not restarts) the fence, which adds
+    the redirect. A new postrm removes that drop and starts the fence
+    again when the upgrade is aborted.
+  * The fence checks the ports of /etc/default/turnkey-init-fence. An
+    empty list, or a value that is not a port number, gave an nft syntax
+    error, and nothing was fenced. The default values are used instead
+    (80; 443 12321 12322; 60080; 60443), with a warning in the journal.
 
  -- Keel Linux maintainers <admin@keellinux.org>  Thu, 26 Nov 2026 12:00:00 +0000
 

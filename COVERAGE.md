@@ -6,8 +6,8 @@ file our changes touch).
 
 ## Branch fix/68-fence-on-nftables: init fence on nftables (2026-11-26)
 
-`bin/turnkey-init-fence` is at 100 percent (32 of 32 lines) and
-`lib/init-fence.sh` at 98.21 (55 of 56; the line kcov does not count is
+`bin/turnkey-init-fence` is at 100 percent (33 of 33 lines) and
+`lib/init-fence.sh` at 98.73 (78 of 79; the line kcov does not count is
 the continued call of simplehttpd.py, as before), measured with
 `tests/test-init-fence.bats` alone. The stubbed nft gets the drop
 script, then the redirect script; the tests fail the nat script, or
@@ -15,7 +15,7 @@ every script, as the kernel does. `tests/test-init-fence-netfilter.bats`
 loads the same scripts into the real nft in a network namespace, with
 keel's enforce ruleset (`tests/fixtures/keel-enforce-fence.nft`), and
 connects over IPv4 and IPv6. `tests/test-packaging.bats` runs the
-upgrade steps of preinst and postinst, and reads the drop-in of
+upgrade steps of preinst, postinst and postrm, and reads the drop-in of
 nftables.service.
 
 ## Branch feat/decision-0076-mode-step: shell 99.74, Python 99 (2026-11-05)

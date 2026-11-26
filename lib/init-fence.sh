@@ -45,6 +45,62 @@ FENCE_TABLE=${FENCE_TABLE:-keel_fence}
 FENCE_CONSOLE=${FENCE_CONSOLE:-/dev/console}
 FENCE_CONSOLE_TIMEOUT=${FENCE_CONSOLE_TIMEOUT:-2}
 
+# fence_is_port VALUE
+# Succeeds when VALUE is a TCP port number, 1 to 65535.
+fence_is_port() {
+    [[ "$1" =~ ^[0-9]{1,5}$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 ))
+}
+
+# fence_ports_ok VALUE...
+# Succeeds when there is at least one VALUE and each one is a port number.
+fence_ports_ok() {
+    local port
+    (( $# > 0 )) || return 1
+    for port in "$@"; do
+        fence_is_port "$port" || return 1
+    done
+}
+
+# fence_check_ports
+# Puts the default values in place of a port list or a fence port of the
+# defaults file that is empty or is not port numbers, and says so. An
+# empty list gave an nft script with a syntax error, and then nothing was
+# fenced. The values go into nft scripts, so only digits pass.
+fence_check_ports() {
+    local file=${INITFENCE_DEFAULT:-/etc/default/turnkey-init-fence}
+    if ! fence_ports_ok "${HTTP_PORTS[@]}"; then
+        HTTP_PORTS=(80)
+        echo "<4>HTTP_PORTS in $file is not a list of port numbers: fencing ${HTTP_PORTS[*]}" >&2
+    fi
+    if ! fence_ports_ok "${HTTPS_PORTS[@]}"; then
+        HTTPS_PORTS=(443 12321 12322)
+        echo "<4>HTTPS_PORTS in $file is not a list of port numbers: fencing ${HTTPS_PORTS[*]}" >&2
+    fi
+    if ! fence_is_port "${HTTP_FENCE_PORT:-}"; then
+        HTTP_FENCE_PORT=60080
+        echo "<4>HTTP_FENCE_PORT in $file is not a port number: using $HTTP_FENCE_PORT" >&2
+    fi
+    if ! fence_is_port "${HTTPS_FENCE_PORT:-}"; then
+        HTTPS_FENCE_PORT=60443
+        echo "<4>HTTPS_FENCE_PORT in $file is not a port number: using $HTTPS_FENCE_PORT" >&2
+    fi
+    # decimal, with no leading zero
+    read -r -a HTTP_PORTS <<< "$(fence_decimal "${HTTP_PORTS[@]}")"
+    read -r -a HTTPS_PORTS <<< "$(fence_decimal "${HTTPS_PORTS[@]}")"
+    HTTP_FENCE_PORT=$((10#$HTTP_FENCE_PORT))
+    HTTPS_FENCE_PORT=$((10#$HTTPS_FENCE_PORT))
+}
+
+# fence_decimal PORT...
+# Each PORT in decimal with no leading zero, separated by a space.
+fence_decimal() {
+    local port out=()
+    for port in "$@"; do
+        out+=("$((10#$port))")
+    done
+    echo "${out[*]}"
+}
+
 # fence_ports
 # The fenced ports, HTTP_PORTS then HTTPS_PORTS, separated by a space.
 fence_ports() {
@@ -113,6 +169,7 @@ fence_alert() {
 # fences the ports.
 fence_rules_start() {
     local ports
+    fence_check_ports
     ports=$(fence_ports)
     if ! fence_table_drop | nft -f -; then
         fence_alert 3 "cannot load the nftables table inet $FENCE_TABLE: TCP ports $ports are not fenced, the application answers on them before keel-init"

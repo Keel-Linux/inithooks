@@ -134,6 +134,68 @@ teardown() {
     [[ "$(fence_table_redirect)" == *'tcp dport 8443 redirect to :61443'* ]]
 }
 
+@test "check_ports leaves valid ports alone and says nothing" {
+    run fence_check_ports
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    fence_check_ports
+    [ "$(fence_ports)" = '80 443 12321 12322' ]
+    [ "$HTTP_FENCE_PORT $HTTPS_FENCE_PORT" = '60080 60443' ]
+}
+
+@test "check_ports puts the default ports in place of empty port lists" {
+    HTTP_PORTS=()
+    HTTPS_PORTS=()
+    run fence_check_ports
+    [ "${lines[0]}" = "<4>HTTP_PORTS in $INITFENCE_DEFAULT is not a list of port numbers: fencing 80" ]
+    [ "${lines[1]}" = "<4>HTTPS_PORTS in $INITFENCE_DEFAULT is not a list of port numbers: fencing 443 12321 12322" ]
+    fence_check_ports 2>/dev/null
+    [ "$(fence_ports)" = '80 443 12321 12322' ]
+    [[ "$(fence_table_drop)" == *'tcp dport { 80, 443, 12321, 12322 } drop'* ]]
+}
+
+@test "check_ports puts the defaults in place of a list with a value that is not a port" {
+    local bad
+    for bad in 80x 0 65536 -1 '' '80;drop'; do
+        HTTP_PORTS=(8080 "$bad")
+        HTTPS_PORTS=(8443)
+        fence_check_ports 2>/dev/null
+        [ "$(fence_ports)" = '80 8443' ] || {
+            echo "not refused: '$bad'" >&2
+            return 1
+        }
+    done
+}
+
+@test "check_ports writes the ports in decimal, with no leading zero" {
+    HTTP_PORTS=(080)
+    HTTPS_PORTS=(0443 8443)
+    HTTP_FENCE_PORT=060080
+    fence_check_ports
+    [ "$(fence_ports)" = '80 443 8443' ]
+    [ "$HTTP_FENCE_PORT" = 60080 ]
+}
+
+@test "check_ports puts the default fence ports in place of values that are not ports" {
+    HTTP_FENCE_PORT=
+    HTTPS_FENCE_PORT=99999
+    run fence_check_ports
+    [ "${lines[0]}" = "<4>HTTP_FENCE_PORT in $INITFENCE_DEFAULT is not a port number: using 60080" ]
+    [ "${lines[1]}" = "<4>HTTPS_FENCE_PORT in $INITFENCE_DEFAULT is not a port number: using 60443" ]
+    fence_check_ports 2>/dev/null
+    [[ "$(fence_table_redirect)" == *'tcp dport 80 redirect to :60080'* ]]
+    [[ "$(fence_table_redirect)" == *'tcp dport 443 redirect to :60443'* ]]
+}
+
+@test "rules start fences the default ports when the lists are empty" {
+    HTTP_PORTS=()
+    HTTPS_PORTS=()
+    run fence_rules start
+    [ "$status" -eq 0 ]
+    [ "${lines[-1]}" = 'Redirecting TCP ports 80 443 12321 12322 to the fence page (nftables table inet keel_fence)' ]
+    [[ "$(scripts)" == *'tcp dport { 80, 443, 12321, 12322 } drop'* ]]
+}
+
 @test "rules start loads the drop first, then the redirect" {
     run fence_rules start
     [ "$status" -eq 0 ]
@@ -292,6 +354,14 @@ teardown() {
     [ "$status" -ne 0 ]
     [[ "${lines[-1]}" == '<3>cannot load the nftables table inet keel_fence: '* ]]
     [ -z "$(calls simplehttpd.py)" ]
+}
+
+@test "start with empty port lists in the defaults file fences the default ports" {
+    sed -i 's/^HTTP_PORTS=.*/HTTP_PORTS=()/; s/^HTTPS_PORTS=.*/HTTPS_PORTS=()/' "$INITFENCE_DEFAULT"
+    run "$FENCE" start
+    [ "$status" -eq 0 ]
+    [ "$(scripts | grep -c 'redirect to')" -eq 4 ]
+    [ "${lines[-1]}" = 'Started turnkey-init-fence' ]
 }
 
 @test "start serves the packaged htdocs when the writable copy is missing" {

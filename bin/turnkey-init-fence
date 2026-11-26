@@ -22,6 +22,8 @@ LOGFILE=${LOGFILE:-/var/log/init-fence.log}
 source "$INITFENCE_DEFAULT"
 # shellcheck source=lib/init-fence.sh
 source "$INITHOOKS_PATH/lib/init-fence.sh"
+# the mini server and the rules read the same checked values
+fence_check_ports
 
 HTDOCS=$(fence_htdocs "$HTDOCS" "$INITHOOKS_PATH/turnkey-init-fence/htdocs")
 
