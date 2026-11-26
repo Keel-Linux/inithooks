@@ -79,6 +79,7 @@ CONF = "/etc/inithooks.conf"
 SSH_ANSWER = "/run/inithooks/ssh-answer"
 STATE = "/var/lib/inithooks/cloud-drive/instance-id"
 PASSWORD = "/var/lib/inithooks/cloud-drive/root-password"
+# the first line is the instance-id the password was set for (30rootpass)
 PASSWORD_TEXT = (
     "the root password was set from the cloud-init drive: 30rootpass does"
     " not ask it, not in keel-init either\n"
@@ -229,7 +230,8 @@ def firstboot(settings: cloud_drive.Settings, sudoadmin: bool) -> None:
         password_set = True
         # nothing asks it again, keel-init neither (decision 2026-11-26)
         cloud_drive.write_text(env("CLOUD_DRIVE_PASSWORD", PASSWORD),
-                               PASSWORD_TEXT, 0o600)
+                               f"{settings.instance_id}\n{PASSWORD_TEXT}",
+                               0o600)
     # root's keys: 29sudoadmin, after this hook, merges them into admin's
     install_keys(settings, ROOT)
     if settings.keys:
@@ -283,8 +285,23 @@ def record(instance_id: str, name: str) -> None:
         fatal(f"not an instance-id: {instance_id!r}")
     if name and cloud_drive.fqdn.normalize(name) != (name, None):
         fatal(f"not a host name: {name!r}")
+    last_id, last_name = recorded()
     cloud_drive.write_text(env("CLOUD_DRIVE_STATE", STATE),
                            f"{instance_id}\n{name}\n")
+    carry_password(last_id, last_name, instance_id, name)
+
+
+def carry_password(last_id: str, last_name: str, instance_id: str,
+                   name: str) -> None:
+    """The same machine with a new instance-id (a key added, the name
+    kept) keeps the record that the drive set its root password; a clone
+    (a new name) does not, and is asked"""
+    path = env("CLOUD_DRIVE_PASSWORD", PASSWORD)
+    lines = cloud_drive.read_text(path).splitlines()
+    if not lines or not last_id or lines[0] != last_id or name != last_name:
+        return
+    cloud_drive.write_text(path, "".join(
+        f"{line}\n" for line in [instance_id, *lines[1:]]), 0o600)
 
 
 def main() -> None:

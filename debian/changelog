@@ -34,15 +34,20 @@ inithooks (2.3.6+keel40) trixie; urgency=medium
     /var/lib/inithooks/cloud-drive/instance-id.
   * When the cloud-init drive set the root password, nothing asks it
     again: 02cloud-drive records it in
-    /var/lib/inithooks/cloud-drive/root-password, and 30rootpass skips
-    the root password then, in the boot run and in keel-init (maintainer
-    decision 2026-11-26). The domain question stays.
+    /var/lib/inithooks/cloud-drive/root-password with the instance-id,
+    and 30rootpass skips the root password while that is the instance-id
+    applied last, in the boot run and in keel-init (maintainer decision
+    2026-11-26). A key added in Proxmox (the same name) carries the
+    record to the new instance-id; a clone or a VM from a template of a
+    booted VM is asked. The domain question stays.
   * 99reboot: the reboot for a new kernel waits while an SSH session is
     open or keel-init runs (lib/reboot-wait.sh, bin/reboot-when-idle, a
     transient unit inithooks-reboot-when-idle). The updates are installed
     before. With nothing open it reboots at once, as before. An SSH
-    session holds the reboot for at most 6 hours (REBOOT_WAIT_MAX=21600);
-    keel-init holds it until it ends. Depends on procps (pgrep).
+    session or keel-init holds the reboot for at most 6 hours
+    (REBOOT_WAIT_MAX=21600), and the log says what was still open. Only
+    root's sshd session processes and keel-init count. Depends on procps
+    (pgrep).
   * A clone that is renamed from its drive loses the certificate domain
     of the original: bin/fqdn.py --forget-tls removes tls.acme.domains
     from the instance description (tls.acme.enabled goes to false when it

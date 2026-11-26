@@ -43,6 +43,7 @@ fi"
     export INITHOOKS_SSH_ANSWER=$BATS_TEST_TMPDIR/ssh-answer
     export INITHOOKS_DEFERRED=$BATS_TEST_TMPDIR/deferred
     export CLOUD_DRIVE_PASSWORD=$BATS_TEST_TMPDIR/root-password
+    export CLOUD_DRIVE_STATE=$BATS_TEST_TMPDIR/instance-id
     CALLS=$BATS_TEST_TMPDIR/calls
     unset _TURNKEY_INIT INITHOOKS_UNATTENDED
 }
@@ -269,7 +270,8 @@ role tty" ]
 }
 
 @test "30rootpass asks nothing when the cloud-init drive set the root password" {
-    echo "set from the cloud-init drive" > "$CLOUD_DRIVE_PASSWORD"
+    printf '4c2a6f\nset from the cloud-init drive\n' > "$CLOUD_DRIVE_PASSWORD"
+    printf '4c2a6f\nblog\n' > "$CLOUD_DRIVE_STATE"
     export INITHOOKS_UNATTENDED=no
     bin_stub setpass.py
 
@@ -282,7 +284,8 @@ role tty" ]
 }
 
 @test "keel-init does not ask the root password the cloud-init drive set" {
-    echo "set from the cloud-init drive" > "$CLOUD_DRIVE_PASSWORD"
+    printf '4c2a6f\nset from the cloud-init drive\n' > "$CLOUD_DRIVE_PASSWORD"
+    printf '4c2a6f\nblog\n' > "$CLOUD_DRIVE_STATE"
     export INITHOOKS_UNATTENDED=no _TURNKEY_INIT=1
     bin_stub setpass.py
 
@@ -302,4 +305,27 @@ role tty" ]
 
     [ "$status" -eq 0 ]
     [ "$(cat "$CALLS")" = "setpass.py admin --pass=" ]
+}
+
+@test "a clone of a template asks the root password the original's drive set" {
+    # the record names the original's instance-id; the clone applied its own
+    printf '4c2a6f\nset from the cloud-init drive\n' > "$CLOUD_DRIVE_PASSWORD"
+    printf '9f1e\ndb\n' > "$CLOUD_DRIVE_STATE"
+    export INITHOOKS_UNATTENDED=no _TURNKEY_INIT=1
+    bin_stub setpass.py
+
+    run "$REPO/firstboot.d/30rootpass"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$CALLS")" = "setpass.py root --pass=" ]
+}
+
+@test "a password record with no instance-id spares nothing" {
+    echo "set from the cloud-init drive" > "$CLOUD_DRIVE_PASSWORD"
+    export INITHOOKS_UNATTENDED=no _TURNKEY_INIT=1
+    bin_stub setpass.py
+
+    run "$REPO/firstboot.d/30rootpass"
+
+    [ "$(cat "$CALLS")" = "setpass.py root --pass=" ]
 }

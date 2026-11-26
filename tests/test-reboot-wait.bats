@@ -115,17 +115,35 @@ exit 1"
     [[ "$stderr" == *"90 s"*"SSH session is still open"* ]]
 }
 
-@test "keel-init holds the reboot past the limit, and never in its middle" {
-    echo forever > "$OPEN/ssh-open"
-    echo 5 > "$OPEN/keel-init-open"
+@test "keel-init holds the reboot until it ends, within the limit" {
+    echo 2 > "$OPEN/keel-init-open"
 
     run "$INITHOOKS_PATH/bin/reboot-when-idle"
 
     [ "$status" -eq 0 ]
     [ "$(calls init)" = 6 ]
-    # five steps with keel-init, then the limit is past
-    [ "$(calls sleep | wc -l)" -eq 5 ]
-    [ "$(cat "$OPEN/keel-init-open")" = 0 ]
+    [ "$(calls sleep | wc -l)" -eq 2 ]
+}
+
+@test "after the limit keel-init no longer holds the reboot either" {
+    echo forever > "$OPEN/keel-init-open"
+
+    run --separate-stderr "$INITHOOKS_PATH/bin/reboot-when-idle"
+
+    [ "$status" -eq 0 ]
+    [ "$(calls init)" = 6 ]
+    [ "$(calls sleep | wc -l)" -eq 3 ]
+    [[ "$stderr" == *"90 s"*"keel-init is still running"* ]]
+}
+
+@test "only root's sshd sessions and keel-init count" {
+    source "$REPO/lib/reboot-wait.sh"
+
+    reboot_ssh_open || true
+    reboot_keel_init || true
+
+    [ "$(calls pgrep)" = "-u root -f ^sshd(-session)?: [^/]
+-u root -x keel-init|turnkey-init" ]
 }
 
 @test "99reboot with an SSH session open installs nothing more and waits" {

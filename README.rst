@@ -136,17 +136,19 @@ keel-init runs every first boot hook, as it always does, and asks the
 domain name, prefilled with the name from the drive. When the drive set
 the root password, nothing asks it again, not the boot run and not
 keel-init: 02cloud-drive records it in
-/var/lib/inithooks/cloud-drive/root-password, and 30rootpass then skips
-the root password (the infrastructure administrator decided it).
+/var/lib/inithooks/cloud-drive/root-password with the instance-id, and
+30rootpass then skips the root password while that instance-id is the one
+applied last (the infrastructure administrator decided it). A clone, or a
+VM from a template of a booted VM, is asked.
 
 With nobody to answer the console, the boot run also does what it does on
 a headless container: 95secupdates installs the security updates as
 SEC_UPDATES=FORCE does, and 99reboot reboots when a new kernel came with
 them. That reboot waits while an SSH session is open or keel-init runs
 (lib/reboot-wait.sh): a transient unit, inithooks-reboot-when-idle, looks
-every 30 seconds and reboots once none remains. An SSH session holds the
-reboot for at most 6 hours (REBOOT_WAIT_MAX); keel-init holds it until it
-ends, so the machine never reboots in the middle of keel-init.
+every 30 seconds and reboots once none remains, at most 6 hours later
+(REBOOT_WAIT_MAX); the log says what was still open then. Only root's sshd
+session processes and keel-init count.
 
 The hook runs once for each instance-id, which it keeps in
 /var/lib/inithooks/cloud-drive/instance-id. Proxmox makes the instance-id

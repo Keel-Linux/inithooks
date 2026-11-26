@@ -138,6 +138,7 @@ class Firstboot(CliCase):
                          "export FQDN='blog.example.org'\n")
         self.assertIn("keel-init asks", self.read(self.answer))
         # nothing asks the root password again, keel-init neither
+        self.assertEqual(self.read(self.password).splitlines()[0], "4c2a6f")
         self.assertIn("cloud-init drive", self.read(self.password))
         self.assertEqual(self.read(self.state), "4c2a6f\nblog.example.org\n")
         self.assertNotIn(SHA256, err)
@@ -379,6 +380,25 @@ class Clone(CliCase):
 
 
 class RecordAndUsage(CliCase):
+    def test_a_new_id_with_the_same_name_keeps_the_password_record(self):
+        # a key added in Proxmox: the same machine, a new instance-id
+        os.makedirs(dirname(self.state))
+        with open(self.state, "w") as fob:
+            fob.write("0ld\nblog\n")
+        with open(self.password, "w") as fob:
+            fob.write("0ld\nset from the drive\n")
+        self.assertEqual(self.cli("--record-id=n3w", "--name=blog")[0], 0)
+        self.assertEqual(self.read(self.password), "n3w\nset from the drive\n")
+
+    def test_a_clone_does_not_carry_the_password_record(self):
+        os.makedirs(dirname(self.state))
+        with open(self.state, "w") as fob:
+            fob.write("0ld\nblog\n")
+        with open(self.password, "w") as fob:
+            fob.write("0ld\nset from the drive\n")
+        self.assertEqual(self.cli("--record-id=n3w", "--name=db")[0], 0)
+        self.assertEqual(self.read(self.password), "0ld\nset from the drive\n")
+
     def test_record_id(self):
         self.assertEqual(self.cli("--record-id=9f1e")[0], 0)
         self.assertEqual(self.read(self.state), "9f1e\n\n")
