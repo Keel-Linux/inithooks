@@ -132,16 +132,21 @@ a password from the drive, 75keel-role, and others) record their question
 for keel-init, and 97turnkey-init-fence-disable keeps the fence up. The
 first SSH login as root starts keel-init (the profile fence), which asks
 the questions on the SSH terminal. The web fence does not block SSH.
-keel-init runs every first boot hook, as it always does: it asks the root
-password again (Keep is not offered under keel-init) and the domain name,
-prefilled with the name from the drive. ROOT_PASS=KEEP only removes the
-password screen from the boot run.
+keel-init runs every first boot hook, as it always does, and asks the
+domain name, prefilled with the name from the drive. When the drive set
+the root password, nothing asks it again, not the boot run and not
+keel-init: 02cloud-drive records it in
+/var/lib/inithooks/cloud-drive/root-password, and 30rootpass then skips
+the root password (the infrastructure administrator decided it).
 
 With nobody to answer the console, the boot run also does what it does on
 a headless container: 95secupdates installs the security updates as
 SEC_UPDATES=FORCE does, and 99reboot reboots when a new kernel came with
-them. A reboot ends an SSH session opened early; keel-init then starts at
-the next login.
+them. That reboot waits while an SSH session is open or keel-init runs
+(lib/reboot-wait.sh): a transient unit, inithooks-reboot-when-idle, looks
+every 30 seconds and reboots once none remains. An SSH session holds the
+reboot for at most 6 hours (REBOOT_WAIT_MAX); keel-init holds it until it
+ends, so the machine never reboots in the middle of keel-init.
 
 The hook runs once for each instance-id, which it keeps in
 /var/lib/inithooks/cloud-drive/instance-id. Proxmox makes the instance-id
@@ -153,7 +158,11 @@ recorded instance-id (bare metal, an ISO install, a VM first booted
 without a drive) it reads nothing. It renames the machine
 as 31fqdn does only when the drive's name is not the one applied with the
 last instance-id (the file keeps it on its second line), so a new key
-does not undo a name given in keel-init.
+does not undo a name given in keel-init. A rename also removes the
+certificate domain of the original (tls.acme.domains) from the instance
+description, through bin/fqdn.py --forget-tls and keel spec validate, so
+that keel-init asks the name again; tls.acme.enabled goes to false when
+it was true.
 It does not set the password again.
 
 Non-interactive system initialization

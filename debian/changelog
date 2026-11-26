@@ -32,9 +32,26 @@ inithooks (2.3.6+keel40) trixie; urgency=medium
     instance-id, so a new key does not undo a name given in keel-init.
     The instance-id and the drive's name are kept in
     /var/lib/inithooks/cloud-drive/instance-id.
-  * tests: test-cloud-drive.bats (18), test_cloud_drive.py (44),
-    test_cloud_drive_cli.py (26). tests/coverage.sh also measures
-    everyboot.d.
+  * When the cloud-init drive set the root password, nothing asks it
+    again: 02cloud-drive records it in
+    /var/lib/inithooks/cloud-drive/root-password, and 30rootpass skips
+    the root password then, in the boot run and in keel-init (maintainer
+    decision 2026-11-26). The domain question stays.
+  * 99reboot: the reboot for a new kernel waits while an SSH session is
+    open or keel-init runs (lib/reboot-wait.sh, bin/reboot-when-idle, a
+    transient unit inithooks-reboot-when-idle). The updates are installed
+    before. With nothing open it reboots at once, as before. An SSH
+    session holds the reboot for at most 6 hours (REBOOT_WAIT_MAX=21600);
+    keel-init holds it until it ends. Depends on procps (pgrep).
+  * A clone that is renamed from its drive loses the certificate domain
+    of the original: bin/fqdn.py --forget-tls removes tls.acme.domains
+    from the instance description (tls.acme.enabled goes to false when it
+    was true, which keel spec apply needs) through the same keel spec
+    validate path as 31fqdn, so that keel-init asks the name again.
+  * tests: test-cloud-drive.bats (21), test-reboot-wait.bats (9),
+    test_cloud_drive.py (44), test_cloud_drive_cli.py (26), test_fqdn.py
+    (3 new), test_fqdn_cli.py (3 new), test-console.bats (a pgrep stub).
+    tests/coverage.sh also measures everyboot.d.
 
  -- Keel Linux maintainers <admin@keellinux.org>  Thu, 26 Nov 2026 12:00:00 +0000
 

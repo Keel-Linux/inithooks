@@ -50,6 +50,10 @@
   `everyboot.d/02cloud-drive`, with `bin/cloud-drive.py` and `bin/fqdn.py`
   as stubs, and the marker of `lib/console.sh` that leaves the first boot
   questions to keel-init when an SSH key came from the cloud-init drive.
+- `test-reboot-wait.bats`: `lib/reboot-wait.sh`, `bin/reboot-when-idle`
+  and `firstboot.d/99reboot`: the reboot for a new kernel waits while an
+  SSH session is open or keel-init runs; `pgrep`, `init`, `sleep` and
+  `systemd-run` are stubs.
 - `test_cloud_drive.py`, `test_cloud_drive_cli.py`: pytest tests of
   `libinithooks/cloud_drive.py` and `bin/cloud-drive.py` on scratch drives
   laid out as Proxmox writes them; blkid, mount and chpasswd are faked at

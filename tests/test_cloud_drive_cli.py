@@ -46,6 +46,7 @@ class CliCase(unittest.TestCase):
         self.conf = join(self.dir, "inithooks.conf")
         self.answer = join(self.dir, "run", "ssh-answer")
         self.state = join(self.dir, "state", "instance-id")
+        self.password = join(self.dir, "state", "root-password")
         self.calls = []
         self.write("user-data", PROXMOX)
         self.write("meta-data", "instance-id: 4c2a6f\n")
@@ -64,6 +65,7 @@ class CliCase(unittest.TestCase):
             "INITHOOKS_CONF": self.conf,
             "INITHOOKS_SSH_ANSWER": self.answer,
             "CLOUD_DRIVE_STATE": self.state,
+            "CLOUD_DRIVE_PASSWORD": self.password,
             "CLOUD_DRIVE_CONTAINER": join(self.dir, "no-container"),
             "CLOUD_DRIVE_ROOT": self.drive,
             "CLOUD_DRIVE_HOME": self.home,
@@ -135,6 +137,8 @@ class Firstboot(CliCase):
                          "export ROOT_PASS=KEEP\n"
                          "export FQDN='blog.example.org'\n")
         self.assertIn("keel-init asks", self.read(self.answer))
+        # nothing asks the root password again, keel-init neither
+        self.assertIn("cloud-init drive", self.read(self.password))
         self.assertEqual(self.read(self.state), "4c2a6f\nblog.example.org\n")
         self.assertNotIn(SHA256, err)
         self.assertIn("package_upgrade", err)
@@ -156,6 +160,7 @@ class Firstboot(CliCase):
         self.assertEqual(status, 0, err)
         self.assertEqual(self.commands(), ["systemd-detect-virt"])
         self.assertIn("ROOT_PASS is preseeded", err)
+        self.assertFalse(exists(self.password))
         self.assertIn("already preseeded or described", err)
         self.assertEqual(self.read(self.conf),
                          "export ROOT_PASS='x'\nexport HOSTNAME=web\n")
@@ -165,6 +170,7 @@ class Firstboot(CliCase):
         self.assertEqual(status, 0, err)
         self.assertEqual(self.commands(), ["systemd-detect-virt"])
         self.assertIn("SUDOADMIN is on", err)
+        self.assertFalse(exists(self.password))
         # root's keys, which 29sudoadmin copies to admin
         self.assertTrue(exists(join(self.home, ".ssh", "authorized_keys")))
 
@@ -173,6 +179,7 @@ class Firstboot(CliCase):
                                   answers={"chpasswd": done(1)})
         self.assertEqual(status, 1)
         self.assertIn("chpasswd failed for root", err)
+        self.assertFalse(exists(self.password))
         self.assertFalse(exists(self.state))
 
     def test_applied_id_does_nothing(self):

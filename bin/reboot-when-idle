@@ -1,0 +1,11 @@
+#!/bin/bash -e
+# Run by the transient unit inithooks-reboot-when-idle (lib/reboot-wait.sh):
+# reboots for the new kernel once no SSH session and no keel-init remain.
+
+INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
+# shellcheck source=default/inithooks
+source "$INITHOOKS_DEFAULT"
+# shellcheck source=lib/reboot-wait.sh
+source "$INITHOOKS_PATH/lib/reboot-wait.sh"
+
+reboot_wait

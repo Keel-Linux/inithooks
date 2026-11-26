@@ -52,6 +52,9 @@ Environment (for tests; the defaults are the machine's paths):
     CLOUD_DRIVE_STATE       the recorded instance-id, and the drive's
                             name on the next line
                             (/var/lib/inithooks/cloud-drive/instance-id)
+    CLOUD_DRIVE_PASSWORD    the record that the drive set the root password,
+                            which firstboot.d/30rootpass reads
+                            (/var/lib/inithooks/cloud-drive/root-password)
     CLOUD_DRIVE_CONTAINER   the container marker (/run/systemd/container)
     CLOUD_DRIVE_ROOT        a directory to read as the mounted drive,
                             instead of blkid and mount
@@ -75,6 +78,11 @@ from libinithooks import cloud_drive
 CONF = "/etc/inithooks.conf"
 SSH_ANSWER = "/run/inithooks/ssh-answer"
 STATE = "/var/lib/inithooks/cloud-drive/instance-id"
+PASSWORD = "/var/lib/inithooks/cloud-drive/root-password"
+PASSWORD_TEXT = (
+    "the root password was set from the cloud-init drive: 30rootpass does"
+    " not ask it, not in keel-init either\n"
+)
 CONTAINER = "/run/systemd/container"
 SYSFS = "/sys/class/block"
 TIMEOUT = 30
@@ -219,6 +227,9 @@ def firstboot(settings: cloud_drive.Settings, sudoadmin: bool) -> None:
     elif settings.password:
         set_password(settings, ROOT)
         password_set = True
+        # nothing asks it again, keel-init neither (decision 2026-11-26)
+        cloud_drive.write_text(env("CLOUD_DRIVE_PASSWORD", PASSWORD),
+                               PASSWORD_TEXT, 0o600)
     # root's keys: 29sudoadmin, after this hook, merges them into admin's
     install_keys(settings, ROOT)
     if settings.keys:

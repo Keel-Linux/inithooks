@@ -5,6 +5,9 @@
 # When nobody can answer the console (lib/console.sh), the machine reboots
 # as it does after SEC_UPDATES=FORCE: 95secupdates installed the updates
 # the same way.
+#
+# In every case the reboot waits while an SSH session is open or keel-init
+# runs (lib/reboot-wait.sh): with nothing open it is at once, as before.
 
 chmod -x "$0" # self-deactivating
 
@@ -13,6 +16,8 @@ INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
 . "$INITHOOKS_DEFAULT"
 # shellcheck source=lib/console.sh
 . "$INITHOOKS_PATH/lib/console.sh"
+# shellcheck source=lib/reboot-wait.sh
+. "$INITHOOKS_PATH/lib/reboot-wait.sh"
 # shellcheck disable=SC1090
 [ -e "$INITHOOKS_CONF" ] && . "$INITHOOKS_CONF"
 
@@ -21,7 +26,7 @@ grep -qs boot=live /proc/cmdline && exit 2
 [ "$REBOOT" == "SKIP" ] && exit 0
 
 reboot() {
-    init 6
+    reboot_when_idle
 }
 
 if [ "$SEC_UPDATES" == "FORCE" ]; then

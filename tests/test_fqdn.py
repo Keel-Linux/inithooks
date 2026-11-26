@@ -437,6 +437,35 @@ class TestUpdated(unittest.TestCase):
                 self.assertEqual(after["tls"], tls)
 
 
+class TestWithoutAcmeDomains(unittest.TestCase):
+    """A clone (everyboot.d/02cloud-drive) forgets the certificate domain
+    of the original, so that keel-init asks it again"""
+
+    def test_the_domains_go_and_acme_is_turned_off(self):
+        # enabled with no domains is a refusal of keel spec apply
+        before = {"version": 1, "tls": {"acme": {
+            "enabled": True, "challenge": "http-01",
+            "domains": ["blog.example.org"]}}}
+        self.assertEqual(fqdn.without_acme_domains(before), {
+            "version": 1,
+            "tls": {"acme": {"enabled": False, "challenge": "http-01"}}})
+        # the document given is not changed
+        self.assertEqual(before["tls"]["acme"]["domains"],
+                         ["blog.example.org"])
+
+    def test_acme_that_is_not_enabled_stays_as_it_is(self):
+        self.assertEqual(
+            fqdn.without_acme_domains(
+                {"tls": {"acme": {"domains": ["a.example.org"]}}}),
+            {"tls": {"acme": {}}})
+
+    def test_nothing_to_forget_leaves_the_description_equal(self):
+        for document in ({"version": 1}, {"tls": None}, {"tls": "x"},
+                         {"tls": {"acme": None}}, {"tls": {"acme": []}},
+                         {"tls": {"acme": {"enabled": True}}}):
+            self.assertEqual(fqdn.without_acme_domains(document), document)
+
+
 class TestSpecPath(unittest.TestCase):
     def test_inithooks_decl_names_the_file(self):
         self.assertEqual(fqdn.spec_path({"INITHOOKS_DECL": "/x/i.yaml"}),

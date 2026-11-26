@@ -8,7 +8,10 @@
 # has a new VM name), the machine is renamed as 31fqdn renames it
 # (lib/hostname.sh, bin/fqdn.py), because 09hostname and 31fqdn run only
 # at the first boot; a name the operator gave since (keel-init) stays
-# while the drive's name stays. The password is not set again. The id
+# while the drive's name stays. A rename also removes the certificate
+# domain of the original (tls.acme.domains, and tls.acme.enabled goes to
+# false) from the instance description, so that keel-init asks the name
+# and records it again. The password is not set again. The id
 # and the drive's name are recorded at the end.
 #
 # At the first boot firstboot.d/02cloud-drive has recorded the id
@@ -43,6 +46,9 @@ if [[ -n "$name_hostname" ]]; then
     # with no domain, --record removes the instance.fqdn of the original
     "$INITHOOKS_PATH/bin/fqdn.py" --record --hostname="$name_hostname" \
         --fqdn="$name_fqdn"
+    # the certificate domain of the original goes, so that keel-init asks
+    # it again: the description, as 31fqdn writes it (keel spec validate)
+    "$INITHOOKS_PATH/bin/fqdn.py" --forget-tls
     hostname_set "$name_hostname"
     "$INITHOOKS_PATH/bin/fqdn.py" --hosts --hostname="$name_hostname" \
         --fqdn="$name_fqdn"

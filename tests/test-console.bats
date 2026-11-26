@@ -369,6 +369,8 @@ setup_secupdates() {
 setup_reboot() {
     hangs reboot-ask.py
     stub init
+    # no SSH session and no keel-init: the reboot is not put off
+    stub pgrep 'exit 1'
 }
 
 @test "30rootpass on a console with no size keeps the password" {

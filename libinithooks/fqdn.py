@@ -250,6 +250,28 @@ def updated(document: Mapping[str, Any], hostname: str, fqdn: str) -> dict:
     return after
 
 
+def without_acme_domains(document: Mapping[str, Any]) -> dict:
+    """A new description without tls.acme.domains; the given one is not
+    changed, and one with no domains comes back equal
+
+    For a clone (everyboot.d/02cloud-drive): the domain is the original's,
+    and keel-init's 31fqdn records the clone's when the description holds
+    none. tls.acme.enabled goes to false when it was true, because keel
+    spec apply refuses acme enabled with no domains; the operator turns it
+    on again in confconsole once the domain is the clone's.
+    """
+    tls = document.get("tls")
+    if not isinstance(tls, Mapping):
+        return dict(document)
+    acme = tls.get("acme")
+    if not isinstance(acme, Mapping) or "domains" not in acme:
+        return dict(document)
+    acme = {k: v for k, v in acme.items() if k != "domains"}
+    if acme.get("enabled") is True:
+        acme["enabled"] = False
+    return {**document, "tls": {**tls, "acme": acme}}
+
+
 def spec_path(
     env: Mapping[str, str] | None = None,
     exists: Callable[[str], bool] = os.path.exists,

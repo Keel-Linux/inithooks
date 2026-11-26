@@ -302,6 +302,46 @@ class TestRecord(FqdnCase):
         self.assertIn("--record needs --hostname", err)
 
 
+class TestForgetTls(FqdnCase):
+    def test_the_inherited_domain_is_removed(self):
+        with open(self.spec, "w") as fob:
+            fob.write("version: 1\ninstance:\n  hostname: db\n"
+                      "tls:\n  acme:\n    enabled: true\n"
+                      "    domains: [blog.example.org]\n")
+
+        status, out, err, _ = self.run_fqdn(argv=("--forget-tls",))
+
+        self.assertEqual((status, out), (0, ""), err)
+        self.assertEqual(self.read_spec(), {
+            "version": 1, "instance": {"hostname": "db"},
+            "tls": {"acme": {"enabled": False}}})
+        self.assertIn("blog.example.org", err)
+
+    def test_nothing_to_forget_is_not_written(self):
+        with open(self.spec, "w") as fob:
+            fob.write("# kept\nversion: 1\n")
+
+        status, _, err, _ = self.run_fqdn(argv=("--forget-tls",))
+
+        self.assertEqual(status, 0)
+        self.assertIn("declares no certificate domain", err)
+        with open(self.spec) as fob:
+            self.assertTrue(fob.read().startswith("# kept"))
+
+    def test_a_description_that_cannot_be_written_is_fatal(self):
+        with open(self.spec, "w") as fob:
+            fob.write("tls:\n  acme:\n    domains: [blog.example.org]\n")
+        from libinithooks import fqdn as fqdn_lib
+
+        refused = fqdn_lib.FqdnError(f"{self.spec} was NOT changed")
+
+        with mock.patch.object(fqdn_lib, "write_spec", side_effect=refused):
+            status, _, err, _ = self.run_fqdn(argv=("--forget-tls",))
+
+        self.assertEqual(status, 1)
+        self.assertIn(self.spec, err)
+
+
 class TestHosts(FqdnCase):
     def test_the_entry_is_written(self):
         status, out, err, console = self.run_fqdn(

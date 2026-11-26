@@ -42,6 +42,7 @@ fi"
     export INITHOOKS_LOGFILE=$BATS_TEST_TMPDIR/inithooks.log
     export INITHOOKS_SSH_ANSWER=$BATS_TEST_TMPDIR/ssh-answer
     export INITHOOKS_DEFERRED=$BATS_TEST_TMPDIR/deferred
+    export CLOUD_DRIVE_PASSWORD=$BATS_TEST_TMPDIR/root-password
     CALLS=$BATS_TEST_TMPDIR/calls
     unset _TURNKEY_INIT INITHOOKS_UNATTENDED
 }
@@ -115,6 +116,7 @@ fi'
     [ "$status" -eq 0 ]
     [ "$(cat "$CALLS")" = "cloud-drive.py --clone --sudoadmin
 fqdn.py --record --hostname=db --fqdn=db.example.org
+fqdn.py --forget-tls
 fqdn.py --hosts --hostname=db --fqdn=db.example.org
 cloud-drive.py --record-id=9f1e --name=db.example.org" ]
     [ "$(hostname)" = db ]
@@ -132,7 +134,8 @@ fi'
     [ "$status" -eq 0 ]
     # --record with no fqdn removes the instance.fqdn of the original
     [ "$(sed -n 2p "$CALLS")" = "fqdn.py --record --hostname=db --fqdn=" ]
-    [ "$(sed -n 3p "$CALLS")" = "fqdn.py --hosts --hostname=db --fqdn=" ]
+    [ "$(sed -n 3p "$CALLS")" = "fqdn.py --forget-tls" ]
+    [ "$(sed -n 4p "$CALLS")" = "fqdn.py --hosts --hostname=db --fqdn=" ]
     [ "$(hostname)" = db ]
 }
 
@@ -263,4 +266,40 @@ EOF
     [ "$status" -eq 0 ]
     [ "$(cat "$CALLS")" = "mode tty
 role tty" ]
+}
+
+@test "30rootpass asks nothing when the cloud-init drive set the root password" {
+    echo "set from the cloud-init drive" > "$CLOUD_DRIVE_PASSWORD"
+    export INITHOOKS_UNATTENDED=no
+    bin_stub setpass.py
+
+    run --separate-stderr "$REPO/firstboot.d/30rootpass"
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$CALLS" ]
+    [ ! -e "$INITHOOKS_DEFERRED" ]
+    [[ "$stderr" == *"the root password was set from the cloud-init drive"* ]]
+}
+
+@test "keel-init does not ask the root password the cloud-init drive set" {
+    echo "set from the cloud-init drive" > "$CLOUD_DRIVE_PASSWORD"
+    export INITHOOKS_UNATTENDED=no _TURNKEY_INIT=1
+    bin_stub setpass.py
+
+    run "$REPO/firstboot.d/30rootpass"
+
+    [ "$status" -eq 0 ]
+    [ ! -e "$CALLS" ]
+}
+
+@test "the drive's root password does not spare the admin password" {
+    echo "set from the cloud-init drive" > "$CLOUD_DRIVE_PASSWORD"
+    echo "SUDOADMIN=true" >> "$INITHOOKS_DEFAULT"
+    export INITHOOKS_UNATTENDED=no _TURNKEY_INIT=1
+    bin_stub setpass.py
+
+    run "$REPO/firstboot.d/30rootpass"
+
+    [ "$status" -eq 0 ]
+    [ "$(cat "$CALLS")" = "setpass.py admin --pass=" ]
 }
