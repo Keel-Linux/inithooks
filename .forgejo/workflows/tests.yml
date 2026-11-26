@@ -28,9 +28,10 @@ jobs:
       threshold: 98
       # tests/test-packaging.bats runs debhelper over debian/ and reads the
       # maintainer scripts it generates, and tests/test-firstboot-pty.bats
-      # runs the first boot screens with the real dialog; in CI a missing
-      # package fails them
-      apt-packages: debhelper dialog python3-dialog
+      # runs the first boot screens with the real dialog, and
+      # tests/test-init-fence-netfilter.bats loads the fence into the real
+      # nft; in CI a missing package fails them
+      apt-packages: debhelper dialog python3-dialog nftables
   python:
     runs-on: keel-container
     uses: keel-linux/.github/.github/workflows/test-python.yml@main

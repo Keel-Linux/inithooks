@@ -1,9 +1,11 @@
 #!/usr/bin/env bats
 # Tests for lib/init-fence.sh and bin/turnkey-init-fence.
 #
-# iptables, ip6tables and pgrep are stubs on PATH; the mini server is a stub
-# under a scratch INITHOOKS_PATH; /etc/default/turnkey-init-fence, the
-# htdocs, the pid file and the log file are scratch paths.
+# nft and pgrep are stubs on PATH; the mini server is a stub under a
+# scratch INITHOOKS_PATH; /etc/default/turnkey-init-fence, the htdocs, the
+# pid file, the log file and the console are scratch paths.
+# tests/test-init-fence-netfilter.bats loads the same scripts into the real
+# nftables.
 
 bats_require_minimum_version 1.5.0
 
@@ -12,41 +14,36 @@ load helpers
 REPO=$BATS_TEST_DIRNAME/..
 FENCE=$REPO/bin/turnkey-init-fence
 
-# stub_tables NAME NAT_STATUS DELETE_OK [INSERT_STATUS]
-# Stubs iptables or ip6tables: 'nat -n -L' exits NAT_STATUS (0 means the
-# table is available), the first DELETE_OK rule deletions succeed and the
-# next ones fail (the rule is gone), a rule insertion exits INSERT_STATUS
-# (default 0, a filter table that cannot be used exits non-zero),
-# everything else succeeds.
-stub_tables() {
-    stub "$1" "if [[ \"\$*\" == *'-t nat -n -L PREROUTING'* ]]; then
-    exit $2
-fi
-if [[ \" \$* \" == *' -D '* ]]; then
-    n=\$(cat '$STUBS/$1.deleted' 2>/dev/null || echo 0)
-    if (( n < $3 )); then
-        echo \$((n + 1)) > '$STUBS/$1.deleted'
-        exit 0
-    fi
-    exit 1
-fi
-if [[ \" \$* \" == *' -I '* ]]; then
-    exit ${4:-0}
-fi
+# stub_nft [FAIL]
+# Stubs nft: each script it gets on its standard input is appended to
+# nft.scripts, after a line "--". FAIL is what the kernel cannot do: "nat"
+# fails a script with a nat chain (an LXC host with no nftables nat),
+# "all" fails every script (nft cannot load a table).
+stub_nft() {
+    stub nft "script=\$(cat)
+printf -- '--\n%s\n' \"\$script\" >> '$STUBS/nft.scripts'
+case '${1:-}' in
+    all) echo 'Error: Could not process rule: Operation not supported' >&2
+         exit 1 ;;
+    nat) if [[ \"\$script\" == *'type nat'* ]]; then
+             echo 'Error: Could not process rule: No such file or directory' >&2
+             exit 1
+         fi ;;
+esac
 exit 0"
 }
 
-# count NAME PATTERN
-# Number of recorded calls of stub NAME containing PATTERN.
-count() {
-    calls "$1" | grep -c -- "$2" || true
+# scripts
+# The scripts nft got, in order.
+scripts() {
+    cat "$STUBS/nft.scripts" 2>/dev/null || true
 }
 
 setup() {
     setup_stubs
-    stub_tables iptables 0 0
-    stub_tables ip6tables 0 0
+    stub_nft
     stub pgrep 'exit 1'
+    export FENCE_CONSOLE=$BATS_TEST_TMPDIR/console
 
     export INITHOOKS_PATH=$BATS_TEST_TMPDIR/inithooks
     mkdir -p "$INITHOOKS_PATH/bin" "$INITHOOKS_PATH/turnkey-init-fence/htdocs"
@@ -93,121 +90,107 @@ teardown() {
     [ "$(fence_htdocs "$BATS_TEST_TMPDIR/missing" /packaged)" = /packaged ]
 }
 
-@test "nat_available asks the family for its nat PREROUTING chain" {
-    fence_nat_available iptables
-    stub_tables ip6tables 3 0
-    run ! fence_nat_available ip6tables
-    [ "$(calls ip6tables)" = '-t nat -n -L PREROUTING' ]
-}
-
-@test "delete_redirect removes the rule until it is gone, per family" {
-    stub_tables iptables 0 2
-    stub_tables ip6tables 0 1
-    run iptables_delete_redirect 80 60080
+@test "the drop script loads the table again with a drop of the fenced ports from outside" {
+    run fence_table_drop
     [ "$status" -eq 0 ]
-    [ "$output" = 'Removing REDIRECT firewall rule: 80 => 60080' ]
-    [ "$(count iptables '-t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 60080')" -eq 3 ]
-    [ "$(count ip6tables '-t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 60080')" -eq 2 ]
+    [ "$output" = "$(printf '%s\n' \
+        'table inet keel_fence' \
+        'delete table inet keel_fence' \
+        'table inet keel_fence {' \
+        '	chain input {' \
+        '		type filter hook input priority filter - 5; policy accept;' \
+        '		iifname != "lo" tcp dport { 80, 443, 12321, 12322 } drop' \
+        '	}' \
+        '}')" ]
 }
 
-@test "add_redirect adds the rule for both families" {
-    run iptables_add_redirect 443 60443
+@test "the redirect script sends each fenced port to its fence port" {
+    run fence_table_redirect
     [ "$status" -eq 0 ]
-    [ "${lines[0]}" = 'Adding REDIRECT firewall rule: 443 => 60443' ]
-    [ "${lines[1]}" = 'Removing REDIRECT firewall rule: 443 => 60443' ]
-    [ "${#lines[@]}" -eq 2 ]
-    [ "$(count iptables '-t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 60443')" -eq 1 ]
-    [ "$(count ip6tables '-t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 60443')" -eq 1 ]
+    [ "$output" = "$(printf '%s\n' \
+        'table inet keel_fence {' \
+        '	chain prerouting {' \
+        '		type nat hook prerouting priority dstnat; policy accept;' \
+        '		iifname != "lo" tcp dport 80 redirect to :60080' \
+        '		iifname != "lo" tcp dport 443 redirect to :60443' \
+        '		iifname != "lo" tcp dport 12321 redirect to :60443' \
+        '		iifname != "lo" tcp dport 12322 redirect to :60443' \
+        '	}' \
+        '}')" ]
 }
 
-@test "add_redirect refuses the port of a family whose nat table is unavailable" {
-    stub_tables ip6tables 3 0
-    run iptables_add_redirect 443 60443
+@test "the delete script removes the fence's table only, also when there is none" {
+    run fence_table_delete
+    [ "$output" = "$(printf '%s\n' 'table inet keel_fence' 'delete table inet keel_fence')" ]
+}
+
+@test "the scripts follow the ports of the defaults file" {
+    HTTP_PORTS=(8080)
+    HTTPS_PORTS=(8443)
+    HTTP_FENCE_PORT=61080
+    HTTPS_FENCE_PORT=61443
+    [[ "$(fence_table_drop)" == *'tcp dport { 8080, 8443 } drop'* ]]
+    [[ "$(fence_table_redirect)" == *'tcp dport 8080 redirect to :61080'* ]]
+    [[ "$(fence_table_redirect)" == *'tcp dport 8443 redirect to :61443'* ]]
+}
+
+@test "rules start loads the drop first, then the redirect" {
+    run fence_rules start
     [ "$status" -eq 0 ]
-    [ "${lines[2]}" = '<4>ip6tables nat table unavailable, refusing 443 rather than redirecting it to 60443' ]
-    [ "${lines[3]}" = 'Refusing port 443 on ip6tables for as long as the fence is up' ]
-    [ "$(count iptables ' -A PREROUTING ')" -eq 1 ]
-    [ "$(count ip6tables ' -A PREROUTING ')" -eq 0 ]
-    [ "$(count ip6tables '-t filter -I INPUT 1 ! -i lo -p tcp -m tcp --dport 443 -j REJECT --reject-with tcp-reset')" -eq 1 ]
-    [ "$(count iptables ' -I ')" -eq 0 ]
+    [ "$output" = 'Redirecting TCP ports 80 443 12321 12322 to the fence page (nftables table inet keel_fence)' ]
+    [ "$(scripts)" = "$(printf -- '--\n%s\n--\n%s\n' "$(fence_table_drop)" "$(fence_table_redirect)")" ]
+    [ ! -e "$FENCE_CONSOLE" ]
 }
 
-@test "add_redirect refuses the port on both families when neither has nat" {
-    stub_tables iptables 3 0
-    stub_tables ip6tables 3 0
-    run iptables_add_redirect 80 60080
+@test "rules start without nftables nat keeps the drop, and says so in the journal and on the console" {
+    stub_nft nat
+    run fence_rules start
     [ "$status" -eq 0 ]
-    [ "$(count iptables ' -A PREROUTING ')" -eq 0 ]
-    [ "$(count ip6tables ' -A PREROUTING ')" -eq 0 ]
-    [ "$(count iptables '-t filter -I INPUT 1 ! -i lo -p tcp -m tcp --dport 80 -j REJECT --reject-with tcp-reset')" -eq 1 ]
-    [ "$(count ip6tables '-t filter -I INPUT 1 ! -i lo -p tcp -m tcp --dport 80 -j REJECT --reject-with tcp-reset')" -eq 1 ]
-    [ "$(printf '%s\n' "${lines[@]}" | grep -c '^<4>ip6\?tables nat table unavailable')" -eq 2 ]
+    [ "${lines[-1]}" = '<4>cannot redirect TCP ports 80 443 12321 12322 to the fence page (no nftables nat): the fence drops them from outside until keel-init' ]
+    [ "$(cat "$FENCE_CONSOLE")" = 'turnkey-init-fence: cannot redirect TCP ports 80 443 12321 12322 to the fence page (no nftables nat): the fence drops them from outside until keel-init' ]
+    # the drop was loaded, and nothing removed it after the failed redirect
+    [ "$(scripts | grep -c '^delete table')" -eq 1 ]
+    [ "$(scripts | grep -c 'drop$')" -eq 1 ]
 }
 
-@test "add_redirect fails when a port can be neither redirected nor refused" {
-    stub_tables ip6tables 3 0 4
-    run iptables_add_redirect 12321 60443
+@test "rules start fails when nft can load no table, and says the ports are not fenced" {
+    stub_nft all
+    run fence_rules start
     [ "$status" -eq 1 ]
-    [ "${lines[-1]}" = '<3>ip6tables cannot refuse 12321 either, nothing is fencing it' ]
-    # the journal never claims a refusal that was not installed
-    [ "$(printf '%s\n' "${lines[@]}" | grep -c '^Refusing port')" -eq 0 ]
+    [ "${lines[-1]}" = '<3>cannot load the nftables table inet keel_fence: TCP ports 80 443 12321 12322 are not fenced, the application answers on them before keel-init' ]
+    [[ "$(cat "$FENCE_CONSOLE")" == 'turnkey-init-fence: cannot load the nftables table inet keel_fence: '* ]]
+    # no redirect is tried after a failed drop
+    [ "$(scripts | grep -c 'type nat')" -eq 0 ]
 }
 
-@test "close_port inserts the refusal first, before the appliance's own rules" {
-    run fence_close_port ip6tables 443
+@test "rules start succeeds also when the console cannot be written" {
+    stub_nft nat
+    export FENCE_CONSOLE=$BATS_TEST_TMPDIR/missing/console
+    run fence_rules start
     [ "$status" -eq 0 ]
-    [ "$output" = 'Refusing port 443 on ip6tables for as long as the fence is up' ]
-    [ "$(calls ip6tables | tail -1)" = '-t filter -I INPUT 1 ! -i lo -p tcp -m tcp --dport 443 -j REJECT --reject-with tcp-reset' ]
+    [[ "${lines[-1]}" == '<4>cannot redirect '* ]]
 }
 
-@test "open_port removes the refusal until it is gone" {
-    stub_tables ip6tables 0 2
-    run fence_open_port ip6tables 443
+@test "the console write has a time limit" {
+    stub timeout 'exit 124'
+    run fence_alert 4 'a message'
     [ "$status" -eq 0 ]
-    [ -z "$output" ]
-    [ "$(count ip6tables '-t filter -D INPUT ! -i lo -p tcp -m tcp --dport 443 -j REJECT --reject-with tcp-reset')" -eq 3 ]
+    [ "$output" = '<4>a message' ]
+    [ "$(calls timeout)" = "2 bash -c printf \"%s\\n\" \"\$1\" > \"\$2\" _ turnkey-init-fence: a message $FENCE_CONSOLE" ]
 }
 
-@test "unensure_accept removes the ACCEPT rules until they are gone" {
-    stub_tables iptables 0 1
-    stub_tables ip6tables 0 2
-    run iptables_unensure_accept 60080
+@test "rules stop removes the fence's table" {
+    run fence_rules stop
     [ "$status" -eq 0 ]
-    [ "$output" = 'Removing ACCEPT firewall rule for fence port: 60080' ]
-    [ "$(count iptables '-t filter -D INPUT -p tcp -m tcp --dport 60080 -j ACCEPT')" -eq 2 ]
-    [ "$(count ip6tables '-t filter -D INPUT -p tcp -m tcp --dport 60080 -j ACCEPT')" -eq 3 ]
+    [ "$output" = 'Removing the nftables table inet keel_fence' ]
+    [ "$(scripts)" = "$(printf -- '--\n%s\n' "$(fence_table_delete)")" ]
 }
 
-@test "ensure_accept adds one ACCEPT rule per family" {
-    run iptables_ensure_accept 60443
+@test "rules stop succeeds when nft fails" {
+    stub_nft all
+    run fence_rules stop
     [ "$status" -eq 0 ]
-    [ "${lines[0]}" = 'Adding ACCEPT firewall rule for fence port: 60443' ]
-    [ "$(count iptables '-t filter -A INPUT -p tcp -m tcp --dport 60443 -j ACCEPT')" -eq 1 ]
-    [ "$(count ip6tables '-t filter -A INPUT -p tcp -m tcp --dport 60443 -j ACCEPT')" -eq 1 ]
-}
-
-@test "redirect start covers every configured port and the fence ports" {
-    run iptables_redirect start
-    [ "$status" -eq 0 ]
-    [ "$(count iptables ' -A PREROUTING ')" -eq 4 ]
-    [ "$(count ip6tables ' -A PREROUTING ')" -eq 4 ]
-    [ "$(count iptables -- '--dport 80 -j REDIRECT --to-port 60080')" -ge 1 ]
-    [ "$(count iptables -- '--dport 12322 -j REDIRECT --to-port 60443')" -ge 1 ]
-    [ "$(count iptables ' -A INPUT ')" -eq 2 ]
-    [ "$(count ip6tables ' -A INPUT ')" -eq 2 ]
-}
-
-@test "redirect stop only deletes, the redirects and the refusals alike" {
-    run iptables_redirect stop
-    [ "$status" -eq 0 ]
-    [ "$(count iptables ' -A ')" -eq 0 ]
-    [ "$(count ip6tables ' -A ')" -eq 0 ]
-    [ "$(count iptables ' -I ')" -eq 0 ]
-    [ "$(count ip6tables ' -I ')" -eq 0 ]
-    [ "$(count iptables ' -D PREROUTING ')" -eq 4 ]
-    [ "$(count iptables '-t filter -D INPUT ! -i lo -p tcp -m tcp --dport 443 -j REJECT --reject-with tcp-reset')" -eq 1 ]
-    [ "$(count ip6tables '-j REJECT')" -eq 4 ]
-    [ "$(count iptables '-j ACCEPT')" -eq 2 ]
+    [ "$output" = 'Removing the nftables table inet keel_fence' ]
 }
 
 @test "start_mini_server prepares the files and runs the server" {
@@ -247,11 +230,31 @@ teardown() {
     stub pgrep "echo $pid"
     run stop_mini_server
     [ "$status" -eq 0 ]
-    [ "${lines[1]}" = "<4>pid file '$PIDFILE' not found" ]
+    [ "${lines[1]}" = "<4>pid file '$PIDFILE' not found or empty" ]
     [ "${lines[3]}" = "Found simplehttpd.py (pid: $pid) - killing" ]
     [ "$(calls pgrep)" = '--oldest --full /usr/lib/inithooks/bin/simplehttpd.py.*lib/inithooks/turnkey-init-fence/htdocs' ]
     sleep 0.2
     run ! kill -0 "$pid" 2>/dev/null
+}
+
+@test "stop_mini_server with an empty pid file removes it and searches for the server" {
+    : > "$PIDFILE"
+    run stop_mini_server
+    [ "$status" -eq 0 ]
+    [ "${lines[1]}" = "<4>pid file '$PIDFILE' not found or empty" ]
+    [ ! -e "$PIDFILE" ]
+    [ -n "$(calls pgrep)" ]
+}
+
+@test "stop_mini_server with a stale pid says so and removes the file" {
+    sleep 0 &
+    local pid=$!
+    wait "$pid"
+    echo "$pid" > "$PIDFILE"
+    run stop_mini_server
+    [ "$status" -eq 0 ]
+    [ "${lines[-1]}" = "<4>no process with the pid in '$PIDFILE'" ]
+    [ ! -e "$PIDFILE" ]
 }
 
 @test "stop_mini_server reports when no server is found" {
@@ -262,53 +265,32 @@ teardown() {
 
 # ----------------------------------------------------------------- script
 
-@test "start with both nat tables redirects both families and serves" {
+@test "start redirects the fenced ports and serves" {
     run "$FENCE" start
     [ "$status" -eq 0 ]
     [ "${lines[0]}" = 'Starting turnkey-init-fence' ]
+    [ "${lines[1]}" = 'Redirecting TCP ports 80 443 12321 12322 to the fence page (nftables table inet keel_fence)' ]
     [ "${lines[-1]}" = 'Started turnkey-init-fence' ]
-    [ "$(count iptables ' -A PREROUTING ')" -eq 4 ]
-    [ "$(count ip6tables ' -A PREROUTING ')" -eq 4 ]
-    [ "$(count iptables ' -A INPUT ')" -eq 2 ]
-    [ "$(count ip6tables ' -A INPUT ')" -eq 2 ]
-    [ "$(count iptables ' -I ')" -eq 0 ]
-    [ "$(count ip6tables ' -I ')" -eq 0 ]
+    [ "$(scripts | grep -c 'redirect to')" -eq 4 ]
     [ "$(printf '%s\n' "${lines[@]}" | grep -c '^<[0-9]>')" -eq 0 ]
     [[ "$(calls simplehttpd.py)" == *"$WRITABLE_HTDOCS 60080 60443 "* ]]
 }
 
-@test "start without the IPv6 nat table refuses what it cannot redirect" {
-    stub_tables ip6tables 3 0
+@test "start without nftables nat drops the fenced ports, serves, and stays up" {
+    stub_nft nat
     run "$FENCE" start
     [ "$status" -eq 0 ]
     [ "${lines[-1]}" = 'Started turnkey-init-fence' ]
-    [ "$(count iptables ' -A PREROUTING ')" -eq 4 ]
-    [ "$(count ip6tables ' -A PREROUTING ')" -eq 0 ]
-    [ "$(count ip6tables ' -I INPUT 1 ')" -eq 4 ]
-    [ "$(count ip6tables ' -A INPUT ')" -eq 2 ]
-    [ "$(printf '%s\n' "${lines[@]}" | grep -c '^<4>ip6tables nat table unavailable')" -eq 4 ]
+    [ "$(printf '%s\n' "${lines[@]}" | grep -c '^<4>cannot redirect TCP ports')" -eq 1 ]
+    [ -s "$FENCE_CONSOLE" ]
     [ -n "$(calls simplehttpd.py)" ]
 }
 
-@test "start with neither nat table refuses every port it was given" {
-    stub_tables iptables 3 0
-    stub_tables ip6tables 3 0
-    run "$FENCE" start
-    [ "$status" -eq 0 ]
-    [ "$(count iptables ' -A PREROUTING ')" -eq 0 ]
-    [ "$(count ip6tables ' -A PREROUTING ')" -eq 0 ]
-    [ "$(count iptables ' -I INPUT 1 ')" -eq 4 ]
-    [ "$(count ip6tables ' -I INPUT 1 ')" -eq 4 ]
-    [ "$(printf '%s\n' "${lines[@]}" | grep -c '^<4>')" -eq 8 ]
-    [ "$(count iptables ' -A INPUT ')" -eq 2 ]
-    [ -n "$(calls simplehttpd.py)" ]
-}
-
-@test "start fails and serves nothing when a port cannot even be refused" {
-    stub_tables ip6tables 3 0 4
+@test "start fails and serves nothing when nft can load no table" {
+    stub_nft all
     run "$FENCE" start
     [ "$status" -ne 0 ]
-    [ "${lines[-1]}" = '<3>ip6tables cannot refuse 80 either, nothing is fencing it' ]
+    [[ "${lines[-1]}" == '<3>cannot load the nftables table inet keel_fence: '* ]]
     [ -z "$(calls simplehttpd.py)" ]
 }
 
@@ -319,14 +301,21 @@ teardown() {
     [[ "$(calls simplehttpd.py)" == *"$INITHOOKS_PATH/turnkey-init-fence/htdocs 60080 60443 "* ]]
 }
 
-@test "start fails when the mini server does not start" {
+# A failed unit runs no ExecStop when 97turnkey-init-fence-disable stops
+# it, and its ExecStopPost removes the table: a failure here would open
+# the ports. The redirect to a port with no server refuses the connection.
+@test "start stays up with the ports fenced when the mini server does not start" {
     stub simplehttpd.py 'exit 7'
     run "$FENCE" start
-    [ "$status" -eq 1 ]
-    [ "${lines[-1]}" = '<3>init-fence mini server failed to start' ]
+    [ "$status" -eq 0 ]
+    printf '%s\n' "${lines[@]}" | grep -qx '<3>init-fence mini server failed to start'
+    [ "${lines[-2]}" = '<3>the fence page does not answer; TCP ports 80 443 12321 12322 stay fenced' ]
+    [ "${lines[-1]}" = 'Started turnkey-init-fence' ]
+    [ "$(scripts | grep -c 'redirect to')" -eq 4 ]
+    [ "$(scripts | grep -c '^delete table')" -eq 1 ]
 }
 
-@test "stop removes the rules and stops the server" {
+@test "stop removes the fence's table and stops the server" {
     sleep 300 &
     local pid=$!
     echo "$pid" > "$PIDFILE"
@@ -334,30 +323,55 @@ teardown() {
     [ "$status" -eq 0 ]
     [ "${lines[0]}" = 'Stopping turnkey-init-fence' ]
     [ "${lines[-1]}" = 'Stopped turnkey-init-fence' ]
-    [ "$(count iptables ' -A ')" -eq 0 ]
-    [ "$(count iptables ' -D PREROUTING ')" -eq 4 ]
-    [ "$(count ip6tables ' -D PREROUTING ')" -eq 4 ]
-    [ "$(count iptables '-j REJECT')" -eq 4 ]
-    [ "$(count ip6tables '-j REJECT')" -eq 4 ]
-    [ "$(count iptables '-t filter -D INPUT -p tcp -m tcp --dport 60080 -j ACCEPT')" -eq 1 ]
+    [ "$(scripts)" = "$(printf -- '--\n%s\n' "$(fence_table_delete)")" ]
     [ ! -e "$PIDFILE" ]
     sleep 0.2
     run ! kill -0 "$pid" 2>/dev/null
 }
 
-@test "stop-post removes the rules after a failed run" {
+# The start tolerates a server that did not start; the stop after it must
+# succeed too, or 97turnkey-init-fence-disable sees a failed stop.
+@test "stop succeeds after a start whose mini server did not start" {
+    stub simplehttpd.py 'exit 7'
+    run "$FENCE" start
+    [ "$status" -eq 0 ]
+    run "$FENCE" stop
+    [ "$status" -eq 0 ]
+    [ "${lines[-1]}" = 'Stopped turnkey-init-fence' ]
+    [ ! -e "$PIDFILE" ]
+}
+
+@test "reload-rules loads the table again while the fence is active" {
+    stub systemctl 'exit 0'
+    run "$FENCE" reload-rules
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "nftables.service flushed the ruleset: loading the fence's table again" ]
+    [ "$(calls systemctl)" = '--quiet is-active turnkey-init-fence.service' ]
+    [ "$(scripts)" = "$(printf -- '--\n%s\n--\n%s\n' "$(fence_table_drop)" "$(fence_table_redirect)")" ]
+    [ -z "$(calls simplehttpd.py)" ]
+}
+
+@test "reload-rules does nothing while the fence is not active" {
+    stub systemctl 'exit 3'
+    run "$FENCE" reload-rules
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ -z "$(calls nft)" ]
+}
+
+@test "stop-post removes the fence's table after a failed run" {
     SERVICE_RESULT=exit-code run "$FENCE" stop-post
     [ "$status" -eq 0 ]
     [ "${lines[0]}" = 'Post-stop cleanup for failed turnkey-init-fence' ]
     [ "${lines[-1]}" = 'Firewall rules removed' ]
-    [ "$(count iptables ' -D PREROUTING ')" -eq 4 ]
+    [ "$(scripts)" = "$(printf -- '--\n%s\n' "$(fence_table_delete)")" ]
 }
 
 @test "stop-post does nothing after a successful run" {
     SERVICE_RESULT=success run "$FENCE" stop-post
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    [ -z "$(calls iptables)" ]
+    [ -z "$(calls nft)" ]
 }
 
 @test "reload restarts the mini server without touching the rules" {
@@ -367,7 +381,7 @@ teardown() {
     [ "$status" -eq 0 ]
     [ "${lines[0]}" = 'Reloading turnkey-init-fence' ]
     [ "${lines[-1]}" = 'Reloaded turnkey-init-fence' ]
-    [ -z "$(calls iptables)" ]
+    [ -z "$(calls nft)" ]
     [ -n "$(calls simplehttpd.py)" ]
 }
 
@@ -375,7 +389,7 @@ teardown() {
     run "$FENCE" bogus
     [ "$status" -eq 1 ]
     [ "$output" = 'Unknown command: bogus' ]
-    [ -z "$(calls iptables)" ]
+    [ -z "$(calls nft)" ]
 }
 
 @test "DEBUG turns tracing on and keeps the behaviour" {
@@ -385,13 +399,14 @@ teardown() {
     printf '%s\n' "${lines[@]}" | grep -qx 'Unknown command: bogus'
 }
 
-# A restore of a saved firewall flushes the tables it names, and with them
-# every rule the fence installed (tests/test-init-fence-netfilter.bats has
-# it happen). At boot the only defence is order: start after whatever does
-# the restoring. Webmin's Firewall module restores /etc/iptables/rules.v4
-# and rules.v6 through webmin-iptables.service and webmin-ip6tables.service
-# when "activate at boot" is set; iptables-persistent restores the same
-# files through netfilter-persistent.service.
+# nftables.service loads Debian's /etc/nftables.conf, which starts with
+# "flush ruleset" and removes the fence's table with every other one
+# (tests/test-init-fence-netfilter.bats has it happen). At boot the only
+# defence is order: start after whatever loads a saved firewall. The
+# legacy restorers stay in the list: Webmin's Firewall module
+# (webmin-iptables.service, webmin-ip6tables.service) and
+# iptables-persistent (netfilter-persistent.service) can still be
+# installed by hand.
 @test "the unit starts after everything that restores a saved firewall at boot" {
     local unit=$REPO/debian/inithooks.turnkey-init-fence.service
     local after

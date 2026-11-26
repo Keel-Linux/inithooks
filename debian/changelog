@@ -1,3 +1,35 @@
+inithooks (2.3.6+keel39) trixie; urgency=medium
+
+  * inithooks#68: the init fence writes nftables, in its own table
+    inet keel_fence, and fails closed. In an unprivileged LXC container
+    the start failed (no legacy ip6tables nat or filter table), the
+    stop-post removed every rule, and the application answered on 80,
+    443, 12321 and 12322 before keel-init. The start now loads a drop of
+    these ports from outside, then the redirect to the fence page over
+    IPv4 and IPv6. If the redirect cannot be loaded (no nftables nat),
+    the drop stays, and the journal and the console say so. The start
+    fails, and says that nothing is fenced, only when nft can load no
+    table. A mini server that does not start no longer fails the unit:
+    the ports stay fenced. The stop removes the fence's table only. keel's
+    ruleset still accepts the fence ports for redirected packets only.
+  * The package depends on nftables. No iptables rule and no ACCEPT rule
+    in another table are written.
+  * An upgrade from 2.3.6+keel38 or earlier stops a running fence in
+    preinst, with the old script that removes its iptables rules, and
+    postinst starts it again. postinst also starts the fence again when
+    it ran before the upgrade with inithooks down, and when it is enabled
+    and failed (the nodes of inithooks#68). A fence on nftables that runs
+    is not restarted by a later upgrade.
+  * systemd/nftables.service.d/turnkey-init-fence.conf: each start,
+    reload, restart and stop of nftables.service flushes the ruleset; the
+    fence then loads its table again while it is active
+    (turnkey-init-fence reload-rules). A reinstall or an upgrade of
+    nftables restarts the unit, also in the first boot's security update.
+  * stop_mini_server succeeds with an empty or stale pid file, which a
+    mini server that did not start leaves.
+
+ -- Keel Linux maintainers <admin@keellinux.org>  Thu, 26 Nov 2026 12:00:00 +0000
+
 inithooks (2.3.6+keel38) trixie; urgency=medium
 
   * A question that a keel-init run leaves again is kept for the next

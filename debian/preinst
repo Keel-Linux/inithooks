@@ -8,6 +8,14 @@ if [ "$1" = "upgrade" ]; then
             touch "/run/$service-was-active"
         fi
     done
+    # Up to 2.3.6+keel38 the fence wrote iptables rules, and the stop of
+    # this version removes only its nftables table (inithooks#68). A fence
+    # that runs stops here, with the script of the old version, and
+    # postinst starts it again on nftables.
+    if dpkg --compare-versions "$2" lt "2.3.6+keel39~" \
+            && [ -f /run/turnkey-init-fence-was-active ]; then
+        systemctl stop turnkey-init-fence.service || true
+    fi
 fi
 
 #DEBHELPER#

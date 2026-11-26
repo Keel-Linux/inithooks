@@ -14,12 +14,6 @@ if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] \
             rm -f /run/inithooks-was-active
             # restart will start if not running
             systemctl restart inithooks.service
-            # unlikely that turnkey-init-fence is running when package is
-            # upgraded but just in case
-            if [ -f "/run/turnkey-init-fence-was-active" ]; then
-                rm -f /run/turnkey-init-fence-was-active
-                systemctl restart turnkey-init-fence.service
-            fi
         else
             # A login prompt should be on the console already. Make sure
             # there is one without touching the one there is: a restart of
@@ -47,6 +41,28 @@ if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] \
                         || systemctl start "$unit" 2>/dev/null || true
                 done
             fi
+        fi
+        # The fence: started again when preinst stopped it (a fence of
+        # 2.3.6+keel38 or earlier, which wrote iptables rules), and when it
+        # is enabled and failed. An enabled fence means that keel-init has
+        # not run, and a failed one fences nothing: the fence of an older
+        # version failed in an unprivileged container (inithooks#68). A
+        # fence on nftables that runs is not restarted: a restart removes
+        # its table and loads it again, and the ports would be open between
+        # the two. A start that fails does not fail the upgrade; the unit
+        # then says why.
+        fence_marker=/run/turnkey-init-fence-was-active
+        if [ -f "$fence_marker" ] \
+                && dpkg --compare-versions "$2" lt "2.3.6+keel39~"; then
+            rm -f "$fence_marker"
+            systemctl restart turnkey-init-fence.service \
+                || echo "inithooks: turnkey-init-fence did not start, see its journal" >&2
+        elif [ -f "$fence_marker" ]; then
+            rm -f "$fence_marker"
+        elif systemctl is-enabled --quiet turnkey-init-fence.service 2>/dev/null \
+                && systemctl is-failed --quiet turnkey-init-fence.service 2>/dev/null; then
+            systemctl restart turnkey-init-fence.service \
+                || echo "inithooks: turnkey-init-fence did not start, see its journal" >&2
         fi
     else
         # fresh install ($2 is empty) - enable services

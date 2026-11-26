@@ -2,14 +2,14 @@
 # Runs a test body against the real netfilter, in a network namespace of
 # its own.
 #
-#   tests/netns-sandbox [NO_NAT [NO_FILTER]] < BODY
+#   tests/netns-sandbox [NFT_FAIL] < BODY
 #
 # Re-executes itself in a new network and mount namespace: an unprivileged
 # user namespace where the kernel lets one mount (Debian), otherwise
 # 'sudo -n unshare' where sudo needs no password (the Ubuntu CI runner,
 # whose AppArmor policy leaves an unprivileged user namespace without the
-# right to mount). Either way iptables and ip6tables are the real ones,
-# acting on a network namespace nobody else uses. A second namespace plays
+# right to mount). Either way nft is the real one, acting on a network
+# namespace nobody else uses. A second namespace plays
 # a client on the other end of a veth pair, over IPv6 (fd00:fe::/64) and
 # IPv4 (10.254.0.0/30), so traffic reaches the appliance on an interface
 # that is not loopback, the way it does in production.
@@ -24,13 +24,12 @@
 #                         the same from the appliance itself, over loopback
 #   FIXTURES              tests/fixtures
 #
-# NO_NAT (iptables, ip6tables, both, or none) names a family whose nat
-# table is made unavailable, the way it is in a container whose host has not
-# loaded (ip6)table_nat: that command answers the nat table with an error,
-# and everything else goes to the real binary. NO_FILTER does the same for
-# inserting a rule into the filter INPUT chain, which is how the fence fails
-# when it can neither redirect a port nor refuse it. Those two answers are
-# the only ones stood in for; what the rules do to traffic is always real.
+# NFT_FAIL (nat, all, or none) is what the kernel cannot do. "nat" fails
+# each nft script with a nat chain, the way a container whose host has no
+# nftables nat fails it; "all" fails every nft call, the way a machine
+# where nft cannot load a table fails it. Everything else goes to the real
+# nft. Those answers are the only ones stood in for; what the rules do to
+# traffic is always real.
 #
 # Exits 77 when no namespace can be made here, so that a caller can tell
 # "cannot ask" from any answer.
@@ -55,8 +54,7 @@ if [[ -z "${NETNS_SANDBOX_INSIDE:-}" ]]; then
     exit 77
 fi
 
-no_nat=${1:-none}
-no_filter=${2:-none}
+nft_fail=${1:-none}
 PATH=/usr/sbin:/sbin:$PATH
 scratch=$(mktemp -d)
 pids=()
@@ -69,44 +67,34 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# xtables takes its lock under /run, which an ordinary user cannot write.
+# a fresh /run, which an ordinary user can write in the namespace
 mount -t tmpfs tmpfs /run
 
-# stand_in IPT FAIL_NAT FAIL_FILTER
-# Puts a wrapper for IPT first on PATH that fails the nat table and/or the
-# filter insertion as a container that lacks them does, and passes every
-# other call to the real binary.
+# stand_in nat|all
+# Puts a wrapper for nft first on PATH that fails as NFT_FAIL says, and
+# passes every other call to the real binary with the same input.
 stand_in() {
-    local ipt=$1
     mkdir -p "$scratch/bin"
     {
         echo '#!/bin/bash'
-        if [[ "$2" == yes ]]; then
-            echo 'if [[ " $* " == *" -t nat "* ]]; then'
-            echo "    echo \"$ipt: can't initialize $ipt table 'nat': Table does not exist\" >&2"
-            echo '    exit 3'
+        if [[ "$1" == all ]]; then
+            echo 'echo "Error: Could not process rule: Operation not supported" >&2'
+            echo 'exit 1'
+        else
+            echo 'script=$(cat)'
+            echo 'if [[ "$script" == *"type nat"* ]]; then'
+            echo '    echo "Error: Could not process rule: No such file or directory" >&2'
+            echo '    exit 1'
             echo 'fi'
+            echo 'printf "%s\n" "$script" | exec /usr/sbin/nft "$@"'
         fi
-        if [[ "$3" == yes ]]; then
-            echo 'if [[ " $* " == *" -I INPUT "* ]]; then'
-            echo "    echo \"$ipt: can't initialize $ipt table 'filter': Permission denied\" >&2"
-            echo '    exit 4'
-            echo 'fi'
-        fi
-        echo "exec /usr/sbin/$ipt \"\$@\""
-    } > "$scratch/bin/$ipt"
-    chmod +x "$scratch/bin/$ipt"
+    } > "$scratch/bin/nft"
+    chmod +x "$scratch/bin/nft"
 }
 
-for ipt in iptables ip6tables; do
-    fail_nat=no
-    fail_filter=no
-    [[ "$no_nat" == both || "$no_nat" == "$ipt" ]] && fail_nat=yes
-    [[ "$no_filter" == both || "$no_filter" == "$ipt" ]] && fail_filter=yes
-    if [[ "$fail_nat$fail_filter" != nono ]]; then
-        stand_in "$ipt" "$fail_nat" "$fail_filter"
-    fi
-done
+if [[ "$nft_fail" != none ]]; then
+    stand_in "$nft_fail"
+fi
 PATH=$scratch/bin:$PATH
 
 ip link set lo up
@@ -185,6 +173,8 @@ probe_local() {
 
 # shellcheck disable=SC2034  # read by BODY
 FIXTURES=$here/fixtures
+# the console of the fence's alerts, a file in the namespace
+FENCE_CONSOLE=$scratch/console
 HTTP_PORTS=(80)
 HTTPS_PORTS=(443 12321 12322)
 HTTP_FENCE_PORT=60080
