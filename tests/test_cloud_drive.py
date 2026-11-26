@@ -68,7 +68,7 @@ class Drive(unittest.TestCase):
 
 
 class FindDevice(unittest.TestCase):
-    def test_nocloud_label_first(self):
+    def test_every_label_is_asked(self):
         seen = []
 
         def blkid(label):
@@ -76,7 +76,22 @@ class FindDevice(unittest.TestCase):
             return ["/dev/sr0"] if label == "cidata" else []
 
         self.assertEqual(cd.find_device(blkid), ("/dev/sr0", cd.NOCLOUD))
-        self.assertEqual(seen, ["cidata"])
+        self.assertEqual(seen, ["cidata", "CIDATA", "config-2"])
+
+    def test_one_device_under_two_labels_is_one(self):
+        self.assertEqual(cd.find_device(lambda l: ["/dev/sr0"]),
+                         ("/dev/sr0", cd.NOCLOUD))
+
+    def test_two_devices_are_both_refused(self):
+        # a second drive (a USB stick beside the Proxmox drive) must not
+        # win by the order blkid answers in
+        with self.assertRaisesRegex(cd.DriveError,
+                                    "/dev/sr0, /dev/sdb.*none is read"):
+            cd.find_device(lambda l: {"cidata": ["/dev/sr0"],
+                                      "config-2": ["/dev/sdb"]}.get(l, []))
+        with self.assertRaisesRegex(cd.DriveError, "none is read"):
+            cd.find_device(lambda l: ["/dev/sr0", "/dev/sr1"]
+                           if l == "cidata" else [])
 
     def test_upper_case_and_config_drive(self):
         self.assertEqual(
@@ -129,6 +144,46 @@ class NoCloud(Drive):
         self.write("user-data", "#cloud-config\n- a\n")
         self.assertIn("user-data is not a mapping, ignored",
                       cd.read_drive(self.dir, cd.NOCLOUD).notes)
+
+    def test_anchors_and_aliases_are_refused(self):
+        # an alias bomb: 305 bytes that expand to many megabytes
+        bomb = "a: &a ['x','x','x','x','x','x','x','x','x']\n" + "".join(
+            f"{chr(98 + i)}: &{chr(98 + i)} [*{chr(97 + i)},*{chr(97 + i)},"
+            f"*{chr(97 + i)},*{chr(97 + i)},*{chr(97 + i)},*{chr(97 + i)},"
+            f"*{chr(97 + i)},*{chr(97 + i)},*{chr(97 + i)}]\n"
+            for i in range(8))
+        self.write("meta-data", "instance-id: a\n")
+        self.write("network-config", "version: 2\nethernets:\n" + "".join(
+            "  " + line + "\n" for line in bomb.splitlines()))
+        notes = cd.read_drive(self.dir, cd.NOCLOUD).notes
+        self.assertIn("network-config has YAML anchors or aliases, ignored",
+                      notes)
+        self.write("user-data", "#cloud-config\nhostname: &h blog\n"
+                   "fqdn: *h\n")
+        s = cd.read_drive(self.dir, cd.NOCLOUD)
+        self.assertIn("user-data has YAML anchors or aliases, ignored",
+                      s.notes)
+        self.assertEqual(s.hostname, "")
+
+    def test_network_values_that_are_not_text_are_skipped(self):
+        self.write("meta-data", "instance-id: a\n")
+        self.write("network-config", """version: 1
+config:
+  - type: physical
+    name: [eth0]
+    subnets:
+      - type: static
+        address: {a: 1}
+      - type: static
+        address: '192.0.2.10'
+""")
+        notes = cd.read_drive(self.dir, cd.NOCLOUD).notes
+        self.assertIn("static addresses ? 192.0.2.10: declare", notes[-1])
+        self.write("network-config", "version: 2\nethernets:\n"
+                   "  eth0:\n    addresses: [[1, 2], '192.0.2.11/24']\n")
+        notes = cd.read_drive(self.dir, cd.NOCLOUD).notes
+        self.assertIn("static addresses eth0 192.0.2.11/24: declare",
+                      notes[-1])
 
     def test_python_tags_are_not_built(self):
         self.write("meta-data", "instance-id: a\n")
@@ -239,11 +294,49 @@ class ReadFile(Drive):
         with self.assertRaisesRegex(cd.DriveError, "cannot be read"):
             cd.read_file(self.dir, "user-data")
 
+    def test_symbolic_link_in_a_directory_is_not_followed(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        with open(join(outside.name, "user_data"), "w") as fob:
+            fob.write("#cloud-config\n")
+        os.makedirs(join(self.dir, "openstack"))
+        os.symlink(outside.name, join(self.dir, "openstack", "latest"))
+        with self.assertRaisesRegex(cd.DriveError, "cannot be read"):
+            cd.read_file(self.dir, "openstack/latest/user_data")
+
+    def test_missing_directory(self):
+        self.assertIsNone(cd.read_file(self.dir,
+                                       "openstack/latest/user_data"))
+
+    def test_nested_file(self):
+        self.write("openstack/latest/user_data", "x")
+        self.assertEqual(cd.read_file(self.dir,
+                                      "openstack/latest/user_data"), "x")
+
     def test_too_large(self):
         with open(join(self.dir, "user-data"), "wb") as fob:
             fob.truncate(cd.MAX_FILE + 1)
         with self.assertRaisesRegex(cd.DriveError, "larger"):
             cd.read_file(self.dir, "user-data")
+
+
+class Machine(unittest.TestCase):
+    def test_qemu_vm(self):
+        self.assertTrue(cd.qemu_vm("kvm\n"))
+        self.assertTrue(cd.qemu_vm("qemu"))
+        for answer in ("none", "", "vmware", "lxc", "oracle"):
+            self.assertFalse(cd.qemu_vm(answer), answer)
+
+    def test_bus_refusal(self):
+        self.assertIsNone(cd.bus_refusal(
+            "/sys/devices/pci0000:00/0000:00:01.1/ata2/host1/target1:0:0/"
+            "1:0:0:0/block/sr0"))
+        self.assertIsNone(cd.bus_refusal(
+            "/sys/devices/pci0000:00/0000:00:0a.0/virtio3/block/vdb"))
+        self.assertIn("USB", cd.bus_refusal(
+            "/sys/devices/pci0000:00/0000:00:14.0/usb1/1-1/1-1:1.0/host6/"
+            "target6:0:0/6:0:0:0/block/sdb"))
+        self.assertIn("not a block device", cd.bus_refusal(""))
 
 
 class Keys(unittest.TestCase):

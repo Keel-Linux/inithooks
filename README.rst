@@ -90,9 +90,13 @@ bin/cloud-drive.py, libinithooks/cloud_drive.py), so the operator can log
 in over SSH with a key on the first boot.
 
 The drive is found with blkid by its file system label: "cidata" or
-"CIDATA" (NoCloud) or "config-2" (ConfigDrive). It is mounted read-only,
-with nosuid, nodev and noexec, and unmounted after the read. In a
-container, and when there is no drive, the hook does nothing.
+"CIDATA" (NoCloud) or "config-2" (ConfigDrive). It is mounted read-only
+(iso9660 or vfat, with nosuid, nodev and noexec) and unmounted after the
+read. In a container, on a machine that is not a QEMU/KVM VM
+(systemd-detect-virt --vm), and when there is no drive, the hook does
+nothing. A drive on USB is refused, and when two devices have a label,
+both are refused. No path part on the drive is followed as a symbolic
+link, and a YAML document with anchors or aliases is refused.
 
 Only these settings of the #cloud-config user-data are used:
 
@@ -143,11 +147,14 @@ The hook runs once for each instance-id, which it keeps in
 /var/lib/inithooks/cloud-drive/instance-id. Proxmox makes the instance-id
 from the user-data and the network configuration, so a clone (a new VM
 name) or a changed cloud-init setting gives a new one. At a later boot,
-everyboot.d/02cloud-drive then adds the SSH keys. It renames the machine
+on a machine born from a drive (an instance-id recorded at the first
+boot), everyboot.d/02cloud-drive then adds the SSH keys. With no
+recorded instance-id (bare metal, an ISO install, a VM first booted
+without a drive) it reads nothing. It renames the machine
 as 31fqdn does only when the drive's name is not the one applied with the
 last instance-id (the file keeps it on its second line), so a new key
-does not undo a name given in keel-init. A machine with no recorded
-instance-id keeps its name. It does not set the password again.
+does not undo a name given in keel-init.
+It does not set the password again.
 
 Non-interactive system initialization
 -------------------------------------

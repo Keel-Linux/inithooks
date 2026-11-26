@@ -33,8 +33,17 @@ Options:
                     the first boot (29sudoadmin makes admin later), and on
                     a clone the keys go to admin
 
-Every case where there is nothing to do exits 0: a container, no drive,
-an instance-id already applied, or under keel-init (_TURNKEY_INIT).
+The drive is read only on a QEMU/KVM VM (systemd-detect-virt --vm), from
+a device that is not on USB (its /sys/class/block path), and only when
+exactly one device has a cloud-init label: two are both refused. --clone
+reads nothing unless an instance-id was recorded at the first boot (the
+machine was born from a drive), so a stick and a power button do not give
+root an SSH key on bare metal, on an ISO install or on a running node.
+
+Every case where there is nothing to do exits 0: a container, not a
+QEMU/KVM VM, no drive, no instance-id recorded (--clone), an instance-id
+already applied, or under keel-init (_TURNKEY_INIT). A refused device
+exits 1.
 
 Environment (for tests; the defaults are the machine's paths):
     INITHOOKS_CONF          the inithooks conf (/etc/inithooks.conf)
@@ -48,6 +57,7 @@ Environment (for tests; the defaults are the machine's paths):
                             instead of blkid and mount
     CLOUD_DRIVE_KIND        the kind of CLOUD_DRIVE_ROOT (nocloud)
     CLOUD_DRIVE_HOME        the home of the account keys go to
+    CLOUD_DRIVE_SYSFS       the block devices in sysfs (/sys/class/block)
 """
 
 import contextlib
@@ -66,6 +76,7 @@ CONF = "/etc/inithooks.conf"
 SSH_ANSWER = "/run/inithooks/ssh-answer"
 STATE = "/var/lib/inithooks/cloud-drive/instance-id"
 CONTAINER = "/run/systemd/container"
+SYSFS = "/sys/class/block"
 TIMEOUT = 30
 ADMIN = "admin"
 ROOT = "root"
@@ -115,7 +126,8 @@ def mounted(device: str) -> Iterator[str]:
     """DEVICE mounted read-only, with nothing on it executable"""
     point = tempfile.mkdtemp(prefix="cloud-drive-")
     try:
-        done = run(["mount", "-o", "ro,nosuid,nodev,noexec", device, point])
+        done = run(["mount", "-t", "iso9660,vfat", "-o",
+                    "ro,nosuid,nodev,noexec", device, point])
         if done.returncode != 0:
             raise cloud_drive.DriveError(
                 f"cannot mount {device}: {done.stderr.decode().strip()}")
@@ -127,9 +139,26 @@ def mounted(device: str) -> Iterator[str]:
         os.rmdir(point)
 
 
+def qemu_vm() -> bool:
+    done = run(["systemd-detect-virt", "--vm"])
+    return cloud_drive.qemu_vm(done.stdout.decode())
+
+
+def check_bus(device: str) -> None:
+    """Refuses DEVICE unless it is on the VM's own bus"""
+    entry = os.path.join(env("CLOUD_DRIVE_SYSFS", SYSFS),
+                         os.path.basename(device))
+    sysfs = os.path.realpath(entry) if os.path.lexists(entry) else ""
+    refusal = cloud_drive.bus_refusal(sysfs)
+    if refusal:
+        raise cloud_drive.DriveError(f"{device} is not read: {refusal}")
+
+
 def read() -> cloud_drive.Settings | None:
     """The settings of the drive, None when there is no drive"""
     if os.path.exists(env("CLOUD_DRIVE_CONTAINER", CONTAINER)):
+        return None
+    if not qemu_vm():
         return None
     root = os.environ.get("CLOUD_DRIVE_ROOT")
     if root:
@@ -139,6 +168,7 @@ def read() -> cloud_drive.Settings | None:
     if found is None:
         return None
     device, kind = found
+    check_bus(device)
     say(f"reading the cloud-init drive {device} ({kind})")
     with mounted(device) as point:
         return cloud_drive.read_drive(point, kind)
@@ -275,6 +305,9 @@ def main() -> None:
         record(record_id, name)
         return
     if os.environ.get("_TURNKEY_INIT"):
+        return
+    if action == "--clone" and not recorded()[0]:
+        # not born from a drive: a drive that comes later gives no key
         return
     try:
         settings = read()

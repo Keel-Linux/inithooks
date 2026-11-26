@@ -45,6 +45,8 @@ NOCLOUD = "nocloud"
 CONFIGDRIVE = "configdrive"
 # blkid labels, in the order they are looked for
 LABELS = (("cidata", NOCLOUD), ("CIDATA", NOCLOUD), ("config-2", CONFIGDRIVE))
+# systemd-detect-virt --vm of a Proxmox VM
+VM_KINDS = frozenset({"qemu", "kvm"})
 # Proxmox keeps the sum of the files below 3 MiB; one file is never more
 MAX_FILE = 3 * 1024 * 1024
 MAX_KEY = 16 * 1024
@@ -107,30 +109,65 @@ def control(text: str) -> bool:
 
 
 def find_device(blkid: Callable[[str], list[str]]) -> tuple[str, str] | None:
-    """(device, kind) of the first drive with a cloud-init label, or None
+    """(device, kind) of the one drive with a cloud-init label, or None
 
-    BLKID gives the devices that carry a label, [] for none.
+    BLKID gives the devices that carry a label, [] for none. Every label
+    is asked: when two devices carry one, a second drive (a USB stick
+    beside the Proxmox drive) could win by the order blkid answers in, so
+    both are refused.
     """
+    found: dict[str, str] = {}
     for label, kind in LABELS:
-        devices = blkid(label)
-        if devices:
-            return devices[0], kind
+        for device in blkid(label):
+            found.setdefault(device, kind)
+    if len(found) > 1:
+        raise DriveError(
+            "more than one device has a cloud-init label: "
+            + ", ".join(found) + "; none is read")
+    return next(iter(found.items()), None)
+
+
+def qemu_vm(virt: str) -> bool:
+    """Whether systemd-detect-virt --vm answered a QEMU or KVM machine,
+    the machines Proxmox runs"""
+    return virt.strip() in VM_KINDS
+
+
+def bus_refusal(sysfs: str) -> str | None:
+    """Why the block device at the sysfs path SYSFS (the resolved
+    /sys/class/block/NAME) is not read as a cloud-init drive, None when
+    it is on the VM's own bus (IDE/SATA, SCSI, virtio). A USB device is
+    refused: anybody with a stick and a power button could give root an
+    SSH key."""
+    if not sysfs:
+        return "not a block device in /sys/class/block"
+    if "/usb" in sysfs:
+        return "a USB device"
     return None
 
 
 def read_file(root: str, name: str) -> str | None:
     """The text of NAME under ROOT, None when it is not there
 
-    A symbolic link is not followed, a file larger than MAX_FILE is
-    refused: the drive is data from outside the machine.
+    A symbolic link is not followed, in any part of NAME: each part is
+    opened with O_NOFOLLOW relative to the one before, so nothing is read
+    from outside the drive. A file larger than MAX_FILE is refused: the
+    drive is data from outside the machine.
     """
-    path = os.path.join(root, name)
+    *dirs, last = name.split("/")
+    fds = [os.open(root, os.O_RDONLY | os.O_DIRECTORY)]
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        for part in dirs:
+            fds.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY
+                               | os.O_NOFOLLOW, dir_fd=fds[-1]))
+        fd = os.open(last, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fds[-1])
     except FileNotFoundError:
         return None
     except OSError as e:
         raise DriveError(f"{name}: cannot be read: {e.strerror}") from e
+    finally:
+        for opened in fds:
+            os.close(opened)
     with os.fdopen(fd, "rb") as fob:
         data = fob.read(MAX_FILE + 1)
     if len(data) > MAX_FILE:
@@ -149,8 +186,18 @@ def read_drive(root: str, kind: str) -> Settings:
 
 def load_yaml(text: str, name: str, notes: list[str]) -> Any:
     """TEXT as YAML data (safe_load builds no object), None when it is
-    not YAML; NOTES says why"""
+    not YAML; NOTES says why
+
+    A document with an anchor or an alias is refused before it is built:
+    aliases expand, and a few hundred bytes become many megabytes (an
+    alias bomb). Proxmox writes neither.
+    """
     try:
+        for event in yaml.parse(text, Loader=yaml.SafeLoader):
+            if isinstance(event, yaml.AliasEvent) or getattr(
+                    event, "anchor", None):
+                notes.append(f"{name} has YAML anchors or aliases, ignored")
+                return None
         return yaml.safe_load(text)
     except yaml.YAMLError:
         notes.append(f"{name} is not valid YAML, ignored")
@@ -387,20 +434,31 @@ def network_notes(doc: Any) -> list[str]:
             subnets = entry.get("subnets")
             for subnet in subnets if isinstance(subnets, list) else []:
                 if (isinstance(subnet, dict)
-                        and str(subnet.get("type")).startswith("static")):
-                    static.append(f"{entry.get('name')} {subnet.get('address')}")
+                        and text(subnet.get("type")).startswith("static")
+                        and text(subnet.get("address"))):
+                    static.append(f"{text(entry.get('name')) or '?'}"
+                                  f" {subnet['address']}")
     elif doc.get("version") == 2 and isinstance(doc.get("ethernets"), dict):
         for name, iface in doc["ethernets"].items():
             addresses = iface.get("addresses") if isinstance(iface, dict) \
                 else None
             for address in addresses if isinstance(addresses, list) else []:
-                static.append(f"{name} {address}")
+                if text(address):
+                    static.append(f"{text(name) or '?'} {address}")
     return [network_note(static)]
 
 
-def interfaces_notes(text: str) -> list[str]:
+def text(value: Any) -> str:
+    """VALUE when it is a plain string with no control character, else
+    "": a note never carries a structure or a line break"""
+    if isinstance(value, str) and not control(value) and len(value) < 256:
+        return value
+    return ""
+
+
+def interfaces_notes(content: str) -> list[str]:
     """What a ConfigDrive network file (ifupdown interfaces) asks for"""
-    static = [line.split()[1] for line in text.splitlines()
+    static = [text(line.split()[1]) or "?" for line in content.splitlines()
               if line.strip().startswith("address") and len(line.split()) > 1]
     return [network_note(static)]
 

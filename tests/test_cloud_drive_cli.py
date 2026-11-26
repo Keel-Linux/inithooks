@@ -49,6 +49,11 @@ class CliCase(unittest.TestCase):
         self.calls = []
         self.write("user-data", PROXMOX)
         self.write("meta-data", "instance-id: 4c2a6f\n")
+        # /sys/class/block: the Proxmox drive on the IDE bus, a USB stick
+        self.sysfs = join(self.dir, "sys-class-block")
+        os.makedirs(self.sysfs)
+        os.symlink("/sys/devices/pci0000:00/0000:00:01.1/ata2/host1/target1:0:0/1:0:0:0/block/sr0", join(self.sysfs, "sr0"))
+        os.symlink("/sys/devices/pci0000:00/0000:00:14.0/usb1/1-1/1-1:1.0/host6/target6:0:0/6:0:0:0/block/sdb", join(self.sysfs, "sdb"))
 
     def write(self, name, text):
         with open(join(self.drive, name), "w") as fob:
@@ -62,12 +67,15 @@ class CliCase(unittest.TestCase):
             "CLOUD_DRIVE_CONTAINER": join(self.dir, "no-container"),
             "CLOUD_DRIVE_ROOT": self.drive,
             "CLOUD_DRIVE_HOME": self.home,
+            "CLOUD_DRIVE_SYSFS": self.sysfs,
         }
         values.update(extra)
         return values
 
     def fake_run(self, answers=None):
-        answers = answers or {}
+        # a Proxmox VM unless the test says otherwise
+        answers = {"systemd-detect-virt": done(0, b"kvm\n"),
+                   **(answers or {})}
 
         def run(cmd, data=None):
             self.calls.append((cmd, data))
@@ -105,6 +113,9 @@ class CliCase(unittest.TestCase):
                 status = e.code
         return status, out.getvalue(), err.getvalue()
 
+    def commands(self):
+        return [call[0][0] for call in self.calls]
+
     def read(self, path):
         with open(path) as fob:
             return fob.read()
@@ -117,8 +128,9 @@ class Firstboot(CliCase):
         self.assertEqual(out, "")
         self.assertEqual(self.read(join(self.home, ".ssh", "authorized_keys")),
                          f"{ED}\n{RSA}\n")
-        self.assertEqual(self.calls, [(["chpasswd", "-e"],
-                                       f"root:{SHA256}\n".encode())])
+        self.assertEqual(self.calls, [
+            (["systemd-detect-virt", "--vm"], None),
+            (["chpasswd", "-e"], f"root:{SHA256}\n".encode())])
         self.assertEqual(self.read(self.conf),
                          "export ROOT_PASS=KEEP\n"
                          "export FQDN='blog.example.org'\n")
@@ -132,7 +144,7 @@ class Firstboot(CliCase):
                    "user: debian\n")
         status, _, err = self.cli("--firstboot")
         self.assertEqual(status, 0, err)
-        self.assertEqual(self.calls, [(["chpasswd"], b"root:s3cret\n")])
+        self.assertEqual(self.calls[1:], [(["chpasswd"], b"root:s3cret\n")])
         self.assertFalse(exists(self.answer))
         self.assertIn("user debian: no account is made", err)
         self.assertEqual(self.read(self.conf), "export ROOT_PASS=KEEP\n")
@@ -142,7 +154,7 @@ class Firstboot(CliCase):
             fob.write("export ROOT_PASS='x'\nexport HOSTNAME=web\n")
         status, _, err = self.cli("--firstboot")
         self.assertEqual(status, 0, err)
-        self.assertEqual(self.calls, [])
+        self.assertEqual(self.commands(), ["systemd-detect-virt"])
         self.assertIn("ROOT_PASS is preseeded", err)
         self.assertIn("already preseeded or described", err)
         self.assertEqual(self.read(self.conf),
@@ -151,7 +163,7 @@ class Firstboot(CliCase):
     def test_sudoadmin_sets_no_password(self):
         status, _, err = self.cli("--firstboot", "--sudoadmin")
         self.assertEqual(status, 0, err)
-        self.assertEqual(self.calls, [])
+        self.assertEqual(self.commands(), ["systemd-detect-virt"])
         self.assertIn("SUDOADMIN is on", err)
         # root's keys, which 29sudoadmin copies to admin
         self.assertTrue(exists(join(self.home, ".ssh", "authorized_keys")))
@@ -186,11 +198,50 @@ class Firstboot(CliCase):
             "--firstboot", unset=("CLOUD_DRIVE_ROOT",),
             answers={"blkid": done(2)})
         self.assertEqual((status, out, err), (0, "", ""))
-        self.assertEqual([c[0][0] for c in self.calls], ["blkid"] * 3)
+        self.assertEqual(self.commands(),
+                         ["systemd-detect-virt"] + ["blkid"] * 3)
+
+    def test_not_a_qemu_vm_reads_nothing(self):
+        # bare metal, or another hypervisor: a stick with the label is
+        # not a Proxmox drive
+        for answer in (done(1, b"none\n"), done(0, b"vmware\n")):
+            self.calls = []
+            status, out, err = self.cli(
+                "--firstboot", unset=("CLOUD_DRIVE_ROOT",),
+                answers={"systemd-detect-virt": answer,
+                         "blkid": done(0, b"/dev/sr0\n")})
+            self.assertEqual((status, out, err), (0, "", ""))
+            self.assertEqual(self.commands(), ["systemd-detect-virt"])
+        self.assertFalse(exists(self.conf))
+
+    def test_usb_device_is_refused(self):
+        status, _, err = self.cli(
+            "--firstboot", unset=("CLOUD_DRIVE_ROOT",),
+            answers={"blkid": done(0, b"/dev/sdb\n")})
+        self.assertEqual(status, 1)
+        self.assertIn("/dev/sdb is not read: a USB device", err)
+        self.assertNotIn("mount", self.commands())
+
+    def test_unknown_device_is_refused(self):
+        status, _, err = self.cli(
+            "--firstboot", unset=("CLOUD_DRIVE_ROOT",),
+            answers={"blkid": done(0, b"/dev/sdz\n")})
+        self.assertEqual(status, 1)
+        self.assertIn("not a block device", err)
+
+    def test_two_devices_are_refused(self):
+        status, _, err = self.cli(
+            "--firstboot", unset=("CLOUD_DRIVE_ROOT",),
+            answers={"blkid": done(0, b"/dev/sr0\n/dev/sdb\n")})
+        self.assertEqual(status, 1)
+        self.assertIn("none is read", err)
+        self.assertNotIn("mount", self.commands())
 
     def test_device_is_mounted_read_only(self):
         def run(cmd, data=None):
             self.calls.append((cmd, data))
+            if cmd[0] == "systemd-detect-virt":
+                return done(0, b"qemu\n")
             if cmd[0] == "blkid":
                 return done(0, b"/dev/sr0\n") if "LABEL=cidata" in cmd \
                     else done(2)
@@ -216,8 +267,8 @@ class Firstboot(CliCase):
         ):
             cli.main()
         mount = next(c[0] for c in self.calls if c[0][0] == "mount")
-        self.assertEqual(mount[1:4], ["-o", "ro,nosuid,nodev,noexec",
-                                      "/dev/sr0"])
+        self.assertEqual(mount[1:6], ["-t", "iso9660,vfat", "-o",
+                                      "ro,nosuid,nodev,noexec", "/dev/sr0"])
         self.assertIn(["umount", mount[-1]], [c[0] for c in self.calls])
         self.assertFalse(exists(mount[-1]))
         self.assertIn("reading the cloud-init drive /dev/sr0 (nocloud)",
@@ -241,8 +292,13 @@ class Firstboot(CliCase):
 
 
 class Clone(CliCase):
+    def setUp(self):
+        super().setUp()
+        # the machine was born from a drive at its first boot
+        self.recorded("0ld\nblog.example.org\n")
+
     def recorded(self, text):
-        os.makedirs(dirname(self.state))
+        os.makedirs(dirname(self.state), exist_ok=True)
         with open(self.state, "w") as fob:
             fob.write(text)
 
@@ -252,7 +308,7 @@ class Clone(CliCase):
         self.assertEqual(status, 0, err)
         self.assertEqual(out, "HOSTNAME=blog\nFQDN=blog.example.org\n"
                          "INSTANCE_ID=4c2a6f\nNAME=blog.example.org\n")
-        self.assertEqual(self.calls, [])
+        self.assertEqual(self.commands(), ["systemd-detect-virt"])
         self.assertFalse(exists(self.conf))
         self.assertEqual(self.read(self.state), "0ld\ndb.example.org\n")
         self.assertTrue(exists(join(self.home, ".ssh", "authorized_keys")))
@@ -267,10 +323,28 @@ class Clone(CliCase):
                          "NAME=blog.example.org\n")
         self.assertIn("keeps its name", err)
 
-    def test_nothing_recorded_keeps_the_name(self):
-        status, out, _ = self.cli("--clone")
-        self.assertEqual(status, 0)
-        self.assertTrue(out.startswith("HOSTNAME=\nFQDN=\n"))
+    def test_not_born_from_a_drive_reads_nothing(self):
+        # bare metal, an ISO install, a VM first booted without a drive:
+        # a drive that comes later gives no key
+        os.remove(self.state)
+        status, out, err = self.cli("--clone", unset=("CLOUD_DRIVE_ROOT",),
+                                    answers={"blkid": done(0, b"/dev/sr0\n")})
+        self.assertEqual((status, out, err), (0, "", ""))
+        self.assertEqual(self.calls, [])
+        self.assertFalse(exists(join(self.home, ".ssh")))
+
+    def test_not_a_qemu_vm_reads_nothing(self):
+        status, out, _ = self.cli(
+            "--clone", answers={"systemd-detect-virt": done(1, b"none\n")})
+        self.assertEqual((status, out), (0, ""))
+        self.assertFalse(exists(join(self.home, ".ssh")))
+
+    def test_usb_device_is_refused(self):
+        status, _, err = self.cli("--clone", unset=("CLOUD_DRIVE_ROOT",),
+                                  answers={"blkid": done(0, b"/dev/sdb\n")})
+        self.assertEqual(status, 1)
+        self.assertIn("a USB device", err)
+        self.assertFalse(exists(join(self.home, ".ssh")))
 
     def test_sudoadmin_keys_go_to_admin(self):
         _, _, err = self.cli("--clone", "--sudoadmin")

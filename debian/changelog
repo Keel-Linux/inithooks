@@ -1,10 +1,14 @@
-inithooks (2.3.6+keel39) trixie; urgency=medium
+inithooks (2.3.6+keel40) trixie; urgency=medium
 
   * firstboot.d/02cloud-drive reads the Proxmox cloud-init drive of a VM
     without the cloud-init package (maintainer decision 2026-11-26), so
     the operator can log in over SSH with a key on the first boot. The
     drive (label cidata, CIDATA or config-2) is found with blkid and
-    mounted read-only, nosuid, nodev, noexec. Only ssh_authorized_keys,
+    mounted read-only (iso9660 or vfat, nosuid, nodev, noexec). It is
+    read only on a QEMU/KVM VM (systemd-detect-virt --vm), from a device
+    that is not on USB, and only when exactly one device has a label.
+    No path part on the drive is followed as a symbolic link, and a YAML
+    document with anchors or aliases is refused (alias bombs). Only ssh_authorized_keys,
     password, hostname, fqdn and the instance-id are used, each
     validated: the keys go to root's authorized_keys, the password is set
     by chpasswd (-e for a hash) and ROOT_PASS=KEEP is added to the
@@ -19,14 +23,17 @@ inithooks (2.3.6+keel39) trixie; urgency=medium
     keel-init, which the first SSH login starts. Before, the boot run
     held the first boot lock on the VM console, and keel-init over SSH
     was refused.
-  * everyboot.d/02cloud-drive: a new instance-id (a clone, or a changed
-    cloud-init setting) adds the SSH keys. The machine is renamed as
+  * everyboot.d/02cloud-drive: on a machine born from a drive (an
+    instance-id recorded at the first boot), a new instance-id (a clone,
+    or a changed cloud-init setting) adds the SSH keys. Bare metal, an
+    ISO install or a VM first booted without a drive reads nothing, so a
+    USB stick and a power cycle do not give root an SSH key. The machine is renamed as
     31fqdn does only when the drive's name changed since the last
     instance-id, so a new key does not undo a name given in keel-init.
     The instance-id and the drive's name are kept in
     /var/lib/inithooks/cloud-drive/instance-id.
-  * tests: test-cloud-drive.bats (18), test_cloud_drive.py (35),
-    test_cloud_drive_cli.py (20). tests/coverage.sh also measures
+  * tests: test-cloud-drive.bats (18), test_cloud_drive.py (44),
+    test_cloud_drive_cli.py (26). tests/coverage.sh also measures
     everyboot.d.
 
  -- Keel Linux maintainers <admin@keellinux.org>  Thu, 26 Nov 2026 12:00:00 +0000
