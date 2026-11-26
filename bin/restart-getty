@@ -4,10 +4,10 @@
 # inithooks-restart-getty1.service, which in turn is intended to be started
 # when inithooks.service exits (regardless of exit status)
 #
-# Assuming this script _was_ triggered by inithooks.service exit, on most
-# systems this loop should only run once. Even on low power systems it should
-# only loop 1 additional times. However to ensure that it is as robust as
-# possible, it will wait up to 10 secs for inithooks.service to stop.
+# When inithooks.service starts again (a restart: the postinst of an upgrade
+# restarts it), the script starts no getty and exits 0: the new run keeps
+# tty1, and its own stop starts the script again. While the unit is
+# deactivating (ExecStopPost) it is over, as for systemctl is-active.
 #
 # It brings a login prompt back on the tty the first boot wizard used (the
 # TTYPath of inithooks.service, resolved: /dev/lxc/tty1 in an LXC container).
@@ -47,19 +47,25 @@ enabled_getty1() {
     done
 }
 
-wait_for_inithooks() {
-    local i
-    for i in {10..1}; do
-        if ! systemctl is-active -q inithooks.service; then
-            echo "inithooks.service is not running"
-            return
-        fi
-        warn "inithooks.service running - waiting $i more seconds for it to stop"
-        sleep 1
-    done
-    if systemctl is-active -q inithooks.service; then
-        fatal "inithooks.service did not stop - no getty started"
-    fi
+# inithooks_starts_again: a start or restart job for inithooks.service is
+# queued, or it runs again. The postinst of an upgrade restarts it: the
+# stop of the restart starts this script (ExecStopPost), and the start of
+# the restart puts the console screen on tty1 again (inithooks#73). A getty
+# would stop that run (the units conflict). When the new run stops, its
+# ExecStopPost starts this script again. The jobs are read before the
+# state: a start job that ends between the two reads leaves the unit
+# active, and the state read sees it.
+inithooks_starts_again() {
+    local job
+    while read -r _ _ job _; do
+        case "$job" in
+            start|restart) return 0 ;;
+        esac
+    done < <(systemctl list-jobs --no-legend inithooks.service 2>/dev/null)
+    case "$(systemctl show -P ActiveState inithooks.service)" in
+        active|activating|reloading) return 0 ;;
+    esac
+    return 1
 }
 
 # start_unit UNIT: succeeds when UNIT is running afterwards
@@ -125,7 +131,11 @@ else
     exit 0
 fi
 
-wait_for_inithooks
+if inithooks_starts_again; then
+    echo "inithooks.service starts again - it keeps tty1, no getty started"
+    exit 0
+fi
+echo "inithooks.service is not running"
 
 wizard_tty=$(tty_path inithooks.service)
 echo "The first boot wizard ran on $wizard_tty"

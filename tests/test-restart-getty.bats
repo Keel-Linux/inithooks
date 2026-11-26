@@ -28,25 +28,33 @@ setup() {
         "$STATE/activestate"
     stub sleep
 
-    # systemctl: is-active, show -P TTYPath, start and reset-failed, from
-    # $STATE. inithooks.service stays active for as many checks as
-    # $STATE/inithooks-active says.
+    # systemctl: is-active, show -P TTYPath and ActiveState, list-jobs,
+    # start and reset-failed, from $STATE. Each check of inithooks.service
+    # (is-active or ActiveState) takes the next line of
+    # $STATE/inithooks-states, and the last line stays (default inactive);
+    # list-jobs inithooks.service prints $STATE/inithooks-jobs.
     stub systemctl "state='$STATE'
 unit=\${*: -1}
+inithooks_state() {
+    local f=\"\$state/inithooks-states\"
+    [[ -s \"\$f\" ]] || { echo inactive; return; }
+    head -n 1 \"\$f\"
+    if (( \$(wc -l < \"\$f\") > 1 )); then
+        sed -i 1d \"\$f\"
+    fi
+}
 case \$1 in
     is-active)
         if [[ \$unit == inithooks.service ]]; then
-            n=\$(cat \"\$state/inithooks-active\" 2>/dev/null || echo 0)
-            if (( n > 0 )); then
-                echo \$((n - 1)) > \"\$state/inithooks-active\"
-                exit 0
-            fi
+            [[ \$(inithooks_state) == active ]] && exit 0
             exit 3
         fi
         [[ -e \"\$state/active/\$unit\" ]] && exit 0
         exit 3 ;;
     show)
-        if [[ \$3 == ActiveState ]]; then
+        if [[ \$3 == ActiveState && \$unit == inithooks.service ]]; then
+            inithooks_state
+        elif [[ \$3 == ActiveState ]]; then
             if [[ -e \"\$state/activestate/\$unit\" ]]; then
                 cat \"\$state/activestate/\$unit\"
             elif [[ -e \"\$state/active/\$unit\" ]]; then
@@ -57,6 +65,9 @@ case \$1 in
         else
             cat \"\$state/ttypath/\$unit\" 2>/dev/null
         fi
+        exit 0 ;;
+    list-jobs)
+        [[ \$unit == inithooks.service ]] && cat \"\$state/inithooks-jobs\" 2>/dev/null
         exit 0 ;;
     start)
         [[ -e \"\$state/fail-start/\$unit\" ]] && exit 1
@@ -307,31 +318,148 @@ active() {
     [[ "$output" == *"inithooks-getty-tty1.service failed"* ]]
 }
 
-@test "waits for inithooks.service to stop before starting the getty" {
+# inithooks_states STATE...: the states of inithooks.service, one per check
+inithooks_states() {
+    printf '%s\n' "$@" > "$STATE/inithooks-states"
+}
+
+@test "inithooks.service deactivating is over: the getty starts at once" {
+    # ExecStopPost runs while the unit is deactivating; there is no wait
     vm
     enable getty@tty1.service getty@.service
     tty_of getty@tty1.service "$DEV/tty1"
     startable getty@tty1.service
-    echo 3 > "$STATE/inithooks-active"
+    inithooks_states deactivating
 
     run "$SCRIPT"
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"waiting 10 more seconds"* ]]
-    [ "$(calls sleep | wc -l)" -eq 3 ]
+    [[ "$output" == *"inithooks.service is not running"* ]]
+    [ -z "$(calls sleep)" ]
     grep -qx 'start getty@tty1.service' <<< "$(calls systemctl)"
 }
 
-@test "gives up when inithooks.service does not stop in 10 seconds" {
+@test "inithooks.service failed is over: the getty starts" {
+    # OnFailure starts the script after a failed run
     vm
     enable getty@tty1.service getty@.service
-    echo 100 > "$STATE/inithooks-active"
+    tty_of getty@tty1.service "$DEV/tty1"
+    startable getty@tty1.service
+    inithooks_states failed
 
     run "$SCRIPT"
 
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"inithooks.service did not stop"* ]]
-    [ "$(calls sleep | wc -l)" -eq 10 ]
+    [ "$status" -eq 0 ]
+    grep -qx 'start getty@tty1.service' <<< "$(calls systemctl)"
+}
+
+# inithooks#73: the postinst of an upgrade restarts inithooks.service. The
+# stop of the restart starts this script (ExecStopPost), and the start of
+# the restart puts the console screen on tty1 again. The script must not
+# start a getty (it conflicts with inithooks.service and stops the new run)
+# and must not fail (the node is then degraded until a reboot). The next
+# stop of inithooks.service starts the script again.
+
+@test "inithooks.service restarted: a restart job is queued, no getty, no failure" {
+    container
+    enable container-getty@1.service container-getty@.service
+    tty_of container-getty@1.service "$DEV/lxc/tty1"
+    startable container-getty@1.service
+    inithooks_states deactivating
+    echo '9640 inithooks.service restart running' > "$STATE/inithooks-jobs"
+
+    run "$SCRIPT"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"inithooks.service starts again"* ]]
     run ! grep -q '^start' <<< "$(calls systemctl)"
     [ -z "$(calls systemd-run)" ]
+    [ -z "$(calls sleep)" ]
+}
+
+@test "inithooks.service restarted: a start job is queued, no getty, no failure" {
+    container
+    enable container-getty@1.service container-getty@.service
+    tty_of container-getty@1.service "$DEV/lxc/tty1"
+    startable container-getty@1.service
+    inithooks_states inactive
+    echo '9641 inithooks.service start waiting' > "$STATE/inithooks-jobs"
+
+    run "$SCRIPT"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"inithooks.service starts again"* ]]
+    run ! grep -q '^start' <<< "$(calls systemctl)"
+    [ -z "$(calls systemd-run)" ]
+}
+
+@test "inithooks.service restarted: it runs again with the console screen, no getty, no failure" {
+    # the race of inithooks#73: the new run is active before the first check
+    container
+    enable container-getty@1.service container-getty@.service
+    tty_of container-getty@1.service "$DEV/lxc/tty1"
+    startable container-getty@1.service
+    inithooks_states active
+
+    run "$SCRIPT"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"inithooks.service starts again"* ]]
+    run ! grep -q '^start' <<< "$(calls systemctl)"
+    [ -z "$(calls systemd-run)" ]
+    [ -z "$(calls sleep)" ]
+}
+
+@test "inithooks.service restarted: it is activating, no getty, no failure" {
+    container
+    enable container-getty@1.service container-getty@.service
+    tty_of container-getty@1.service "$DEV/lxc/tty1"
+    startable container-getty@1.service
+    inithooks_states activating
+
+    run "$SCRIPT"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"inithooks.service starts again"* ]]
+    run ! grep -q '^start' <<< "$(calls systemctl)"
+    [ -z "$(calls systemd-run)" ]
+}
+
+@test "inithooks.service restarted: it is reloading, no getty, no failure" {
+    container
+    enable container-getty@1.service container-getty@.service
+    tty_of container-getty@1.service "$DEV/lxc/tty1"
+    inithooks_states reloading
+
+    run "$SCRIPT"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"inithooks.service starts again"* ]]
+    run ! grep -q '^start' <<< "$(calls systemctl)"
+}
+
+@test "the jobs are read before the state" {
+    # a start job that ends between the reads leaves the unit active
+    container
+    inithooks_states active
+
+    run "$SCRIPT"
+
+    [ "$status" -eq 0 ]
+    run -0 grep -n -e '^list-jobs' -e '^show -P ActiveState inithooks' <<< "$(calls systemctl)"
+    [[ "${lines[0]}" == *list-jobs* ]]
+}
+
+@test "a stop job of inithooks.service is not a new run: the getty starts" {
+    vm
+    enable getty@tty1.service getty@.service
+    tty_of getty@tty1.service "$DEV/tty1"
+    startable getty@tty1.service
+    inithooks_states inactive
+    echo '9642 inithooks.service stop running' > "$STATE/inithooks-jobs"
+
+    run "$SCRIPT"
+
+    [ "$status" -eq 0 ]
+    grep -qx 'start getty@tty1.service' <<< "$(calls systemctl)"
 }
