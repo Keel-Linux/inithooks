@@ -316,10 +316,63 @@ class Clone(CliCase):
         self.assertEqual(status, 0, err)
         self.assertEqual(out, "HOSTNAME=blog\nFQDN=blog.example.org\n"
                          "INSTANCE_ID=4c2a6f\nNAME=blog.example.org\n")
-        self.assertEqual(self.commands(), ["systemd-detect-virt"])
+        self.assertEqual(self.commands(), ["systemd-detect-virt",
+                                           "chpasswd"])
         self.assertFalse(exists(self.conf))
         self.assertEqual(self.read(self.state), "0ld\ndb.example.org\n")
         self.assertTrue(exists(join(self.home, ".ssh", "authorized_keys")))
+
+    def test_a_clone_gets_the_drive_password_and_its_record(self):
+        # inithooks#71: a clone whose drive sets a password is not asked
+        self.recorded("0ld\ndb.example.org\n")
+        os.makedirs(dirname(self.password), exist_ok=True)
+        with open(self.password, "w") as fob:
+            fob.write("0ld\nset from the drive\n")
+        status, _, err = self.cli("--clone")
+        self.assertEqual(status, 0, err)
+        self.assertEqual(self.commands(), ["systemd-detect-virt",
+                                           "chpasswd"])
+        self.assertEqual(self.calls[1], (["chpasswd", "-e"],
+                                         f"root:{SHA256}\n".encode()))
+        self.assertIn("the root password was set from the drive", err)
+        self.assertTrue(self.read(self.password).startswith("4c2a6f\n"))
+        self.assertEqual(os.stat(self.password).st_mode & 0o777, 0o600)
+        # the hook records the id: the record stays for the clone's id
+        self.assertEqual(self.cli("--record-id=4c2a6f",
+                                  "--name=blog.example.org")[0], 0)
+        self.assertTrue(self.read(self.password).startswith("4c2a6f\n"))
+
+    def test_a_clone_with_no_drive_password_is_asked(self):
+        self.recorded("0ld\ndb.example.org\n")
+        self.write("user-data", PROXMOX.replace(f"password: {SHA256}\n", ""))
+        status, _, err = self.cli("--clone")
+        self.assertEqual(status, 0, err)
+        self.assertNotIn("chpasswd", self.commands())
+        self.assertFalse(exists(self.password))
+
+    def test_a_clone_with_sudoadmin_sets_no_password(self):
+        self.recorded("0ld\ndb.example.org\n")
+        status, _, err = self.cli("--clone", "--sudoadmin")
+        self.assertEqual(status, 0, err)
+        self.assertNotIn("chpasswd", self.commands())
+        self.assertIn("SUDOADMIN is on", err)
+        self.assertFalse(exists(self.password))
+
+    def test_a_clone_stops_when_chpasswd_fails(self):
+        self.recorded("0ld\ndb.example.org\n")
+        status, out, err = self.cli("--clone",
+                                    answers={"chpasswd": done(1)})
+        self.assertEqual((status, out), (1, ""))
+        self.assertIn("chpasswd failed", err)
+        self.assertFalse(exists(self.password))
+
+    def test_the_same_machine_does_not_set_the_password_again(self):
+        # a new key in Proxmox: the name stays, the password the operator
+        # gave since stays
+        self.recorded("0ld\nblog.example.org\n")
+        status, _, err = self.cli("--clone")
+        self.assertEqual(status, 0, err)
+        self.assertNotIn("chpasswd", self.commands())
 
     def test_same_name_keeps_the_name(self):
         # a new key changes the instance-id, not the name: a name the

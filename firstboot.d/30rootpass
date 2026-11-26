@@ -19,7 +19,8 @@ USERNAME=root
 # The record names the instance-id it was set for (its first line), and
 # counts only while that is the instance-id the machine applied last
 # (CLOUD_DRIVE_STATE): a VM made from a template of a booted VM applies its
-# own instance-id, and is asked.
+# own instance-id, and is asked, unless its own drive set the password
+# (everyboot.d/02cloud-drive records it for the clone's instance-id).
 CLOUD_DRIVE_PASSWORD="${CLOUD_DRIVE_PASSWORD:-/var/lib/inithooks/cloud-drive/root-password}"
 CLOUD_DRIVE_STATE="${CLOUD_DRIVE_STATE:-/var/lib/inithooks/cloud-drive/instance-id}"
 
