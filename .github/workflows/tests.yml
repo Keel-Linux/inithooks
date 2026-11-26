@@ -14,7 +14,7 @@ jobs:
     uses: keel-linux/.github/.github/workflows/github-test-shell.yml@main
     with:
       threshold: 98
-      apt-packages: debhelper dialog python3-dialog
+      apt-packages: debhelper dialog python3-dialog nftables
 
   python:
     uses: keel-linux/.github/.github/workflows/github-test-python.yml@main

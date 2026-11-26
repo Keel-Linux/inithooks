@@ -4,6 +4,20 @@ Measured on 2026-09-24 against upstream master (33c43b8), following the
 project decision 0003 (90 percent floor per repository, 95 percent for every
 file our changes touch).
 
+## Branch fix/68-fence-on-nftables: init fence on nftables (2026-11-26)
+
+`bin/turnkey-init-fence` is at 100 percent (33 of 33 lines) and
+`lib/init-fence.sh` at 98.73 (78 of 79; the line kcov does not count is
+the continued call of simplehttpd.py, as before), measured with
+`tests/test-init-fence.bats` alone. The stubbed nft gets the drop
+script, then the redirect script; the tests fail the nat script, or
+every script, as the kernel does. `tests/test-init-fence-netfilter.bats`
+loads the same scripts into the real nft in a network namespace, with
+keel's enforce ruleset (`tests/fixtures/keel-enforce-fence.nft`), and
+connects over IPv4 and IPv6. `tests/test-packaging.bats` runs the
+upgrade steps of preinst, postinst and postrm, and reads the drop-in of
+nftables.service.
+
 ## Branch feat/decision-0076-mode-step: shell 99.74, Python 99 (2026-11-05)
 
 `firstboot.d/75keel-role` (5 of 5 lines) and `lib/keel-firstboot.sh` (21

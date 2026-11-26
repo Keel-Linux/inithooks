@@ -5,8 +5,8 @@
 - `test-*.bats`: bats tests, one file per shell script under test. The
   logic of each script lives in a sourceable library under `lib/`; the tests
   call those functions directly and run the script itself against scratch
-  paths, with external commands (`ip`, `ifup`, `systemctl`, `iptables`,
-  `ip6tables`, `turnkey-version`, `head`) replaced by stubs placed first in
+  paths, with external commands (`ip`, `ifup`, `systemctl`, `nft`,
+  `turnkey-version`, `head`) replaced by stubs placed first in
   `PATH`. Nothing in a test touches the live system.
 - `test-packaging.bats`: runs the real `dh_installsystemd` and
   `dh_installdeb` over a copy of `debian/` and checks the maintainer scripts

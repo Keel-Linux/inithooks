@@ -3,6 +3,12 @@
 # TurnKey web interface fence - blocks access to web app until system is
 # initialized (admin password configure, etc); the firewall and mini server
 # functions live in lib/init-fence.sh
+#
+# The start fails only when nothing fences the ports (nft cannot load the
+# fence's table). When the ports are fenced, by the redirect or by the
+# drop, the unit stays active also if the page does not answer: a failed
+# unit runs no ExecStop at the stop of 97turnkey-init-fence-disable, and
+# its ExecStopPost removes the table, so a failure would open the ports.
 
 DEBUG=${DEBUG:-}
 [[ -z "$DEBUG" ]] || set -x
@@ -16,19 +22,23 @@ LOGFILE=${LOGFILE:-/var/log/init-fence.log}
 source "$INITFENCE_DEFAULT"
 # shellcheck source=lib/init-fence.sh
 source "$INITHOOKS_PATH/lib/init-fence.sh"
+# the mini server and the rules read the same checked values
+fence_check_ports
 
 HTDOCS=$(fence_htdocs "$HTDOCS" "$INITHOOKS_PATH/turnkey-init-fence/htdocs")
 
 case "$1" in
     start)
         echo "Starting turnkey-init-fence"
-        iptables_redirect start
-        start_mini_server
+        fence_rules start
+        if ! start_mini_server; then
+            fence_alert 3 "the fence page does not answer; TCP ports $(fence_ports) stay fenced"
+        fi
         echo "Started turnkey-init-fence"
         ;;
     stop)
         echo "Stopping turnkey-init-fence"
-        iptables_redirect stop
+        fence_rules stop
         stop_mini_server
         echo "Stopped turnkey-init-fence"
         ;;
@@ -36,8 +46,19 @@ case "$1" in
         # SERVICE_RESULT is set by systemd
         if [[ "$SERVICE_RESULT" != "success" ]]; then
             echo "Post-stop cleanup for failed turnkey-init-fence"
-            iptables_redirect stop
+            fence_rules stop
             echo "Firewall rules removed"
+        fi
+        ;;
+    reload-rules)
+        # ExecStartPost, ExecReload and ExecStopPost of nftables.service
+        # (systemd/nftables.service.d/turnkey-init-fence.conf): Debian's
+        # /etc/nftables.conf and the unit's stop flush the ruleset, and the
+        # fence's table with it. A reinstall or an upgrade of nftables
+        # restarts the unit, also in the first boot's security update.
+        if systemctl --quiet is-active turnkey-init-fence.service; then
+            echo "nftables.service flushed the ruleset: loading the fence's table again"
+            fence_rules start
         fi
         ;;
     reload)

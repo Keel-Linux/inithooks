@@ -20,8 +20,13 @@ Initialization fence
 
 The "initialization fence" - aka 'turnkey-init-fence' - is the mechanism which
 blocks access to appliance web services until initialization is complete. It
-uses the firewall (via iptables) to redirect attempts to access the local web
-services to a static web page served by inithooks/bin/simplehttpd.py.
+uses nftables, in its own table ``inet keel_fence``, to redirect connections
+from outside to the local web services to a static web page served by
+inithooks/bin/simplehttpd.py, over IPv4 and IPv6. If the redirect cannot be
+loaded (a container whose host has no nftables nat), the fence drops these
+connections, and says so in the journal and on the console. The fence fails
+only when nft can load no table at all; then nothing fences the ports. Its
+stop removes its own table and no other.
 
 The default web root is /usr/share/inithooks/htdocs and contains a page which
 explains that you need to initialize the system before you can access the web

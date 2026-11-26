@@ -1,0 +1,20 @@
+#!/bin/sh
+
+set -e
+
+# dpkg runs "new-postrm abort-upgrade OLD-VERSION" when an upgrade fails
+# after preinst. From 2.3.6+keel38 or earlier, preinst loaded the drop of
+# the fence (table inet keel_fence) and stopped the old fence, which runs
+# with iptables. The drop goes, because the stop of the old fence does
+# not remove it, and the fence starts again from the files on disk. It
+# never fails: the abort must go on.
+if [ "$1" = "abort-upgrade" ] && [ -f /run/turnkey-init-fence-was-active ] \
+        && dpkg --compare-versions "$2" lt "2.3.6+keel39~"; then
+    printf 'table inet keel_fence\ndelete table inet keel_fence\n' \
+        | nft -f - 2>/dev/null || true
+    systemctl start turnkey-init-fence.service || true
+fi
+
+#DEBHELPER#
+
+exit 0
