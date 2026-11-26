@@ -42,11 +42,27 @@ CONSOLE_TTY="${CONSOLE_TTY:-/dev/tty}"
 # a line. 97turnkey-init-fence-disable reads it at the end of the boot run.
 INITHOOKS_DEFERRED="${INITHOOKS_DEFERRED:-/var/lib/inithooks/deferred}"
 
+# Written by firstboot.d/02cloud-drive (bin/cloud-drive.py) when an SSH
+# key came from the cloud-init drive of a VM. The VM's console has a size
+# and takes writes, so the boot run would draw its questions there and
+# hold the first boot lock, and keel-init over SSH would be refused (exit
+# 75) until somebody answered the console. With the marker, the boot run
+# does not ask on the console from that hook on: the questions go to
+# keel-init (console_deferred), which the first login starts. A run
+# under keel-init (_TURNKEY_INIT) asks on its own terminal, as before.
+# It is in /run: a later boot does not see it.
+INITHOOKS_SSH_ANSWER="${INITHOOKS_SSH_ANSWER:-/run/inithooks/ssh-answer}"
+
 # console_unattended
 # Succeeds when nobody can answer the console, the reason then being in
 # INITHOOKS_UNATTENDED. Run it in the shell that keeps the answer, not in
-# a command substitution.
+# a command substitution. INITHOOKS_SSH_ANSWER turns an earlier "no" into
+# that reason.
 console_unattended() {
+    if [[ -z "${_TURNKEY_INIT:-}" ]] && [[ -e "$INITHOOKS_SSH_ANSWER" ]] \
+            && [[ "${INITHOOKS_UNATTENDED:-no}" == "no" ]]; then
+        export INITHOOKS_UNATTENDED="an SSH key came from the cloud-init drive, keel-init asks at the first login"
+    fi
     if [[ -z "${INITHOOKS_UNATTENDED:-}" ]]; then
         if [[ -t 1 ]]; then
             console_check 3>&1

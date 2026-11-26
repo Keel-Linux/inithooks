@@ -81,6 +81,74 @@ keel-init" while the initialization fence is up and no run is in progress.
 The first boot run itself waits for a "keel-init" that holds the lock.
 
 
+Cloud-init drive of a VM
+------------------------
+
+Keel images do not install the cloud-init package. On a VM, the first boot
+reads the Proxmox cloud-init drive itself (firstboot.d/02cloud-drive,
+bin/cloud-drive.py, libinithooks/cloud_drive.py), so the operator can log
+in over SSH with a key on the first boot.
+
+The drive is found with blkid by its file system label: "cidata" or
+"CIDATA" (NoCloud) or "config-2" (ConfigDrive). It is mounted read-only,
+with nosuid, nodev and noexec, and unmounted after the read. In a
+container, and when there is no drive, the hook does nothing.
+
+Only these settings of the #cloud-config user-data are used:
+
+- ssh_authorized_keys (and public_keys of ConfigDrive): each line must be a
+  plain public key of a known type. A line with options (command=, from=)
+  or a blob that does not decode is ignored. The keys are added to
+  /root/.ssh/authorized_keys (mode 0600, .ssh 0700). With SUDOADMIN on,
+  29sudoadmin then copies them to admin.
+- password: a crypt hash ($5$, $6$, $y$, $gy$, $2b$, $2y$, $7$) is set with
+  "chpasswd -e", a plain password with "chpasswd", on standard input. Then
+  ROOT_PASS=KEEP goes into the inithooks conf, and 30rootpass does not ask.
+  With SUDOADMIN on, the password is not set (admin does not exist yet).
+- fqdn and hostname (or local-hostname of meta-data): FQDN= (a name with a
+  domain) or HOSTNAME= goes into the inithooks conf. 09hostname and 31fqdn
+  rename the machine, as for a preseed.
+
+A ROOT_PASS, FQDN or HOSTNAME that the conf already sets (a preseed, or
+00declarative from the instance description) wins over the drive.
+
+Every other key (runcmd, bootcmd, write_files, packages, package_upgrade
+and all others) is ignored, and the journal says which. A user-data that
+is not #cloud-config (a script) is ignored as a whole. Nothing from the
+drive is run. The network configuration is not applied, because keel owns
+the network: the journal says which static addresses it asks for.
+
+With an SSH key from the drive, the boot run asks nothing on the console.
+The console of a VM has a size, so the boot run would draw its questions
+there and hold the first boot lock, and keel-init over SSH would be
+refused until somebody answers the console. The hook writes
+/run/inithooks/ssh-answer, and from then on lib/console.sh tells each hook
+that nobody can answer the console. The hooks that ask (30rootpass without
+a password from the drive, 75keel-role, and others) record their question
+for keel-init, and 97turnkey-init-fence-disable keeps the fence up. The
+first SSH login as root starts keel-init (the profile fence), which asks
+the questions on the SSH terminal. The web fence does not block SSH.
+keel-init runs every first boot hook, as it always does: it asks the root
+password again (Keep is not offered under keel-init) and the domain name,
+prefilled with the name from the drive. ROOT_PASS=KEEP only removes the
+password screen from the boot run.
+
+With nobody to answer the console, the boot run also does what it does on
+a headless container: 95secupdates installs the security updates as
+SEC_UPDATES=FORCE does, and 99reboot reboots when a new kernel came with
+them. A reboot ends an SSH session opened early; keel-init then starts at
+the next login.
+
+The hook runs once for each instance-id, which it keeps in
+/var/lib/inithooks/cloud-drive/instance-id. Proxmox makes the instance-id
+from the user-data and the network configuration, so a clone (a new VM
+name) or a changed cloud-init setting gives a new one. At a later boot,
+everyboot.d/02cloud-drive then adds the SSH keys. It renames the machine
+as 31fqdn does only when the drive's name is not the one applied with the
+last instance-id (the file keeps it on its second line), so a new key
+does not undo a name given in keel-init. A machine with no recorded
+instance-id keeps its name. It does not set the password again.
+
 Non-interactive system initialization
 -------------------------------------
 

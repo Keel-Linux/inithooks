@@ -1,0 +1,53 @@
+#!/bin/bash -e
+# A clone of a Keel VM, or a VM whose cloud-init settings changed: the
+# drive has an instance-id that the machine has not applied. Proxmox
+# makes the instance-id from the user-data and the network
+# configuration, so a new VM name, a new key or a new password changes
+# it. Then the SSH keys are added (bin/cloud-drive.py --clone). When the
+# drive's name is not the one applied with the last instance-id (a clone
+# has a new VM name), the machine is renamed as 31fqdn renames it
+# (lib/hostname.sh, bin/fqdn.py), because 09hostname and 31fqdn run only
+# at the first boot; a name the operator gave since (keel-init) stays
+# while the drive's name stays. The password is not set again. The id
+# and the drive's name are recorded at the end.
+#
+# At the first boot firstboot.d/02cloud-drive has recorded the id
+# already, and this hook does nothing.
+
+INITHOOKS_DEFAULT="${INITHOOKS_DEFAULT:-/etc/default/inithooks}"
+# shellcheck source=default/inithooks
+source "$INITHOOKS_DEFAULT"
+# shellcheck source=lib/hostname.sh
+source "$INITHOOKS_PATH/lib/hostname.sh"
+# shellcheck source=lib/sslcert.sh
+source "$INITHOOKS_PATH/lib/sslcert.sh"
+
+HOOK=02cloud-drive
+args=(--clone)
+[[ "${SUDOADMIN,,}" == "true" ]] && args+=(--sudoadmin)
+answer=$("$INITHOOKS_PATH/bin/cloud-drive.py" "${args[@]}")
+[[ -z "$answer" ]] && exit 0
+
+name_hostname='' name_fqdn='' instance_id='' drive_name=''
+while IFS='=' read -r key value; do
+    case $key in
+        HOSTNAME) name_hostname=$value ;;
+        FQDN) name_fqdn=$value ;;
+        INSTANCE_ID) instance_id=$value ;;
+        NAME) drive_name=$value ;;
+        *) echo "$HOOK: unexpected answer from cloud-drive.py: $key" >&2; exit 1 ;;
+    esac
+done <<< "$answer"
+
+if [[ -n "$name_hostname" ]]; then
+    # with no domain, --record removes the instance.fqdn of the original
+    "$INITHOOKS_PATH/bin/fqdn.py" --record --hostname="$name_hostname" \
+        --fqdn="$name_fqdn"
+    hostname_set "$name_hostname"
+    "$INITHOOKS_PATH/bin/fqdn.py" --hosts --hostname="$name_hostname" \
+        --fqdn="$name_fqdn"
+    sslcert_follow >&2
+fi
+
+"$INITHOOKS_PATH/bin/cloud-drive.py" --record-id="$instance_id" \
+    --name="$drive_name"

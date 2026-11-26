@@ -46,6 +46,14 @@
   call is recorded, so the dialogs run without a terminal or the `dialog`
   package. `test_setpass.py` runs `bin/setpass.py` on the same fake, with
   chpasswd replaced at the subprocess boundary.
+- `test-cloud-drive.bats`: `firstboot.d/02cloud-drive` and
+  `everyboot.d/02cloud-drive`, with `bin/cloud-drive.py` and `bin/fqdn.py`
+  as stubs, and the marker of `lib/console.sh` that leaves the first boot
+  questions to keel-init when an SSH key came from the cloud-init drive.
+- `test_cloud_drive.py`, `test_cloud_drive_cli.py`: pytest tests of
+  `libinithooks/cloud_drive.py` and `bin/cloud-drive.py` on scratch drives
+  laid out as Proxmox writes them; blkid, mount and chpasswd are faked at
+  the subprocess boundary.
 - `test-simplehttpd.sh`: manual launcher of the fence mini server.
 
 ## Running the shell tests
