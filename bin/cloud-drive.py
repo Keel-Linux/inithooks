@@ -23,7 +23,12 @@ Options:
                     INSTANCE_ID= and NAME= are printed for the hook.
                     HOSTNAME= and FQDN= are empty unless the machine is to
                     be renamed: only when the drive's name is not the one
-                    recorded with the last instance-id. With no instance-id
+                    recorded with the last instance-id. A machine to be
+                    renamed (a clone) whose drive sets a password gets
+                    that password, recorded for the new instance-id, so
+                    30rootpass and keel-init do not ask it; the same
+                    machine (the name kept) does not get it again. With
+                    no instance-id
                     recorded (a machine first booted without a drive, or
                     before this command), the machine keeps its name. The
                     hook renames the machine, then records with --record-id
@@ -262,10 +267,27 @@ def clone(settings: cloud_drive.Settings, sudoadmin: bool) -> None:
     if not rename:
         say("the machine keeps its name: the drive's name is the one"
             " applied before, or none was applied from a drive")
+    elif settings.password:
+        clone_password(settings, target)
     print(f"HOSTNAME={settings.hostname if rename else ''}")
     print(f"FQDN={settings.fqdn if rename else ''}")
     print(f"INSTANCE_ID={settings.instance_id}")
     print(f"NAME={name}")
+
+
+def clone_password(settings: cloud_drive.Settings, target: str) -> None:
+    """A clone (a new name) whose drive sets a password: the password is
+    set, and recorded for the clone's instance-id, so 30rootpass and
+    keel-init do not ask it (inithooks#71). --record-id keeps the record,
+    because it names the new instance-id"""
+    if target != ROOT:
+        say("SUDOADMIN is on: the password is not set from the drive,"
+            " 30rootpass sets the admin password")
+        return
+    set_password(settings, ROOT)
+    cloud_drive.write_text(env("CLOUD_DRIVE_PASSWORD", PASSWORD),
+                           f"{settings.instance_id}\n{PASSWORD_TEXT}",
+                           0o600)
 
 
 def drive_name(settings: cloud_drive.Settings) -> str:
@@ -295,7 +317,9 @@ def carry_password(last_id: str, last_name: str, instance_id: str,
                    name: str) -> None:
     """The same machine with a new instance-id (a key added, the name
     kept) keeps the record that the drive set its root password; a clone
-    (a new name) does not, and is asked"""
+    (a new name) does not carry the original's record: --clone wrote a
+    record for the clone's own instance-id when its drive set a password,
+    and with no password on the drive the clone is asked"""
     path = env("CLOUD_DRIVE_PASSWORD", PASSWORD)
     lines = cloud_drive.read_text(path).splitlines()
     if not lines or not last_id or lines[0] != last_id or name != last_name:

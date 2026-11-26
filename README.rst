@@ -144,7 +144,9 @@ keel-init: 02cloud-drive records it in
 /var/lib/inithooks/cloud-drive/root-password with the instance-id, and
 30rootpass then skips the root password while that instance-id is the one
 applied last (the infrastructure administrator decided it). A clone, or a
-VM from a template of a booted VM, is asked.
+VM from a template of a booted VM, is asked unless its own drive sets a
+password: then everyboot.d/02cloud-drive sets that password and records it
+for the clone's instance-id, and nothing asks it.
 
 With nobody to answer the console, the boot run also does what it does on
 a headless container: 95secupdates installs the security updates as
@@ -170,7 +172,11 @@ certificate domain of the original (tls.acme.domains) from the instance
 description, through bin/fqdn.py --forget-tls and keel spec validate, so
 that keel-init asks the name again; tls.acme.enabled goes to false when
 it was true.
-It does not set the password again.
+On a rename (a clone) whose drive sets a password, it sets that password
+for root and records it for the new instance-id, so 30rootpass and
+keel-init do not ask it; with SUDOADMIN on, it does not set it. When the
+name stays (the same machine, for example a key added), it does not set
+the password again, so a password given in keel-init stays.
 
 Non-interactive system initialization
 -------------------------------------

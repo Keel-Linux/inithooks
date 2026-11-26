@@ -1,3 +1,15 @@
+inithooks (2.3.6+keel41) trixie; urgency=medium
+
+  * everyboot.d/02cloud-drive: a clone (a new instance-id and a new
+    name) whose cloud-init drive sets a password gets that password for
+    root, recorded for the clone's instance-id, so 30rootpass and
+    keel-init do not ask it (inithooks#71). Before, the password was not
+    set and keel-init asked it. With SUDOADMIN on, the password is not
+    set, as at the first boot. When the name stays (the same machine),
+    the password is not set again.
+
+ -- Keel Linux maintainers <admin@keellinux.org>  Thu, 26 Nov 2026 18:00:00 +0000
+
 inithooks (2.3.6+keel40) trixie; urgency=medium
 
   * firstboot.d/02cloud-drive reads the Proxmox cloud-init drive of a VM

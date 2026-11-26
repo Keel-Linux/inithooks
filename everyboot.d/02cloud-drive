@@ -11,8 +11,11 @@
 # while the drive's name stays. A rename also removes the certificate
 # domain of the original (tls.acme.domains, and tls.acme.enabled goes to
 # false) from the instance description, so that keel-init asks the name
-# and records it again. The password is not set again. The id
-# and the drive's name are recorded at the end.
+# and records it again. When the drive of a renamed machine (a clone)
+# sets a password, cloud-drive.py sets it and records it for the new
+# instance-id, so 30rootpass and keel-init do not ask it (inithooks#71);
+# the same machine (the name kept) does not get the password again. The
+# id and the drive's name are recorded at the end.
 #
 # At the first boot firstboot.d/02cloud-drive has recorded the id
 # already, and this hook does nothing.
