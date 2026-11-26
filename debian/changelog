@@ -1,3 +1,20 @@
+inithooks (2.3.6+keel42) trixie; urgency=medium
+
+  * bin/restart-getty: an upgrade no longer leaves
+    inithooks-restart-getty1.service failed and the node degraded
+    (inithooks#73). The postinst restarts inithooks.service when it ran
+    before the upgrade. The stop of the restart starts restart-getty
+    (ExecStopPost), and the start of the restart can put the console
+    screen on tty1 again before restart-getty looks. restart-getty
+    waited 10 s for inithooks.service to stop, and then failed. When
+    restart-getty looked first, it started the getty, which stopped the
+    new run (the units conflict). Now restart-getty exits 0 and starts no
+    getty when inithooks.service runs again or a start or restart job for
+    it is queued; the next stop of inithooks.service starts restart-getty
+    again. It waits only while inithooks.service is deactivating.
+
+ -- Keel Linux maintainers <admin@keellinux.org>  Thu, 26 Nov 2026 22:00:00 +0000
+
 inithooks (2.3.6+keel41) trixie; urgency=medium
 
   * everyboot.d/02cloud-drive: a clone (a new instance-id and a new
